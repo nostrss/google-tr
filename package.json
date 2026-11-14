@@ -1,0 +1,14 @@
+{
+  "name": "google-tr",
+  "private": true,
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "@google-cloud/speech": "^8.2.1",
+    "@google-cloud/storage": "^9.0.0",
+    "@google-cloud/translate": "^10.3.0",
+    "express": "^5.3.0",
+    "ws": "^8.23.0"
+  }
+}

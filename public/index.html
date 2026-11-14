@@ -1,0 +1,451 @@
+<!doctype html>
+<html lang="ko">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>다국어 실시간 자막</title>
+<style>
+:root {
+  --bg: #eaeef2; --surface: #ffffff; --ink: #152230; --muted: #5a6877; --line: #d2dae2;
+  --accent: #0b6870; --accent-soft: #d6ecec; --live: #c33a2c; --interim: #8995a2;
+  --term-bg: #ffe27a; --term-ink: #3a2c00; --hl: #fff4cc; --notice-bg: #fdf0d8; --notice-ink: #6a4300;
+  --font: "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", "Noto Sans CJK KR", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f161d; --surface: #17212b; --ink: #e6edf3; --muted: #9aa8b6; --line: #2a3946;
+    --accent: #5cc4bd; --accent-soft: #163a3c; --live: #ff6d5f; --interim: #6f7f8e;
+    --term-bg: #5b4a0e; --term-ink: #ffe9a6; --hl: #2c3320; --notice-bg: #3a2c10; --notice-ink: #ffd88a;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f161d; --surface: #17212b; --ink: #e6edf3; --muted: #9aa8b6; --line: #2a3946;
+  --accent: #5cc4bd; --accent-soft: #163a3c; --live: #ff6d5f; --interim: #6f7f8e;
+  --term-bg: #5b4a0e; --term-ink: #ffe9a6; --hl: #2c3320; --notice-bg: #3a2c10; --notice-ink: #ffd88a;
+  color-scheme: dark;
+}
+*, *::before, *::after { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.55 var(--font);
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 20px 48px;
+}
+.wrap { display: grid; gap: 20px; }
+h1 { margin: 0; font-size: 1.5rem; font-weight: 700; letter-spacing: -0.01em; text-wrap: balance; }
+
+.controls { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 16px; display: grid; gap: 14px; }
+.row { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: center; }
+.field { display: flex; gap: 8px; align-items: center; }
+.label { color: var(--muted); font-size: .88rem; font-weight: 600; }
+select, button { font: inherit; color: inherit; }
+select { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; }
+select:disabled { opacity: .6; }
+fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
+legend { padding: 0; margin-bottom: 6px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { position: relative; }
+.chip input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+.chip span { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 999px; padding: 4px 12px; font-size: .9rem; background: var(--bg); user-select: none; }
+.chip span::before { content: ""; width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid var(--muted); }
+.chip input:checked + span { background: var(--accent-soft); border-color: var(--accent); }
+.chip input:checked + span::before { background: var(--accent); border-color: var(--accent); }
+.chip input:disabled + span { opacity: .4; }
+.chip input.src:disabled + span { text-decoration: line-through; }
+.chip input:focus-visible + span, button:focus-visible, select:focus-visible, .toggle input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
+.toggle { display: inline-flex; gap: 8px; align-items: center; cursor: pointer; font-weight: 600; position: relative; }
+.toggle input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.toggle span { width: 38px; height: 22px; border-radius: 999px; background: var(--line); position: relative; transition: background .2s; flex: none; }
+.toggle span::after { content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: var(--surface); transition: transform .2s; }
+.toggle input:checked + span { background: var(--accent); }
+.toggle input:checked + span::after { transform: translateX(16px); }
+#startBtn { border: 0; border-radius: 10px; padding: 9px 20px; font-weight: 700; cursor: pointer; background: var(--accent); color: var(--surface); }
+#startBtn.stop { background: var(--live); }
+#startBtn:disabled { opacity: .45; cursor: not-allowed; }
+.status { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; color: var(--muted); }
+.status i { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
+.status.on { color: var(--live); }
+.status.on i { background: var(--live); animation: pulse 1.2s infinite; }
+@keyframes pulse { 50% { opacity: .3; } }
+.hint { color: var(--live); font-size: .88rem; font-weight: 600; overflow-wrap: anywhere; }
+.spacer { flex: 1; }
+.glrow { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; padding-top: 12px; border-top: 1px solid var(--line); }
+.glstate { font-size: .92rem; min-width: 0; overflow-wrap: anywhere; }
+.glstate .err { color: var(--live); font-weight: 600; }
+.badge { display: inline-block; font-size: .76rem; font-weight: 700; border-radius: 999px; padding: 0 9px; margin-right: 4px; background: var(--accent-soft); color: var(--accent); border: 1px solid var(--accent); }
+.badge.wait { background: var(--notice-bg); color: var(--notice-ink); border-color: currentColor; }
+.badge.bad { background: transparent; color: var(--live); border-color: currentColor; }
+.badge.off { background: transparent; color: var(--muted); border-color: var(--line); }
+.upbtn { border: 1px solid var(--accent); border-radius: 10px; padding: 6px 14px; font-weight: 700; cursor: pointer; background: var(--surface); color: var(--accent); }
+.upbtn:disabled { opacity: .45; cursor: not-allowed; }
+.glnote { color: var(--muted); font-size: .85rem; margin-top: -6px; }
+
+.stage { display: grid; gap: 14px; }
+.pane { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; min-width: 0; display: flex; flex-direction: column; }
+.pane header { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+.pane header h3 { margin: 0; font-size: .95rem; }
+.pane header .sub { color: var(--muted); font-size: .8rem; }
+.lines { list-style: none; margin: 0; padding: 8px 6px; overflow-y: auto; display: grid; gap: 2px; align-content: start; }
+.orig .lines { max-height: 19rem; min-height: 9rem; }
+.tr .lines { max-height: 15rem; min-height: 7rem; }
+.lines li { display: grid; grid-template-columns: 2.2rem 1fr auto; gap: 8px; align-items: baseline; padding: 5px 8px; border-radius: 8px; }
+.lines li.hl { background: var(--hl); }
+.no { font: 600 .72rem var(--mono); color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; }
+.txt { min-width: 0; overflow-wrap: anywhere; }
+.orig .txt { font-size: clamp(1.1rem, 2.1vw, 1.45rem); line-height: 1.45; font-weight: 650; }
+.orig li.interim .txt, .tr li.interim .txt { color: var(--interim); font-weight: 400; }
+.tr li.interim .ms { opacity: .6; }
+.orig li.interim .txt::after, .tr li.interim .txt::after { content: ""; display: inline-block; width: 2px; height: 1em; background: var(--interim); margin-left: 3px; vertical-align: -2px; animation: pulse 1s infinite; }
+.tr .txt { font-size: 1.04rem; line-height: 1.5; }
+.lines li.err .txt { color: var(--live); font-size: .9rem; font-weight: 600; }
+.ms { font: .72rem var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+mark.term { background: var(--term-bg); color: var(--term-ink); border-radius: 3px; padding: 0 2px; }
+li.new { animation: arrive .7s ease-out; }
+@keyframes arrive { from { background: var(--accent-soft); } }
+.empty { color: var(--muted); padding: 14px; font-size: .92rem; display: block !important; }
+.grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 250px), 1fr)); }
+.meter { display: flex; align-items: center; gap: 2px; height: 26px; margin-left: auto; width: min(180px, 40%); }
+.meter i { flex: 1; background: var(--accent); border-radius: 2px; height: 2px; opacity: .85; transition: height .08s linear; }
+.meter.idle i { background: var(--line); }
+.foot { color: var(--muted); font-size: .82rem; margin: 0; }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+</style>
+
+<div class="wrap">
+  <h1>다국어 실시간 자막</h1>
+
+  <section class="controls" aria-label="자막 설정">
+    <div class="row">
+      <label class="field" for="srcSel"><span class="label">원문 언어</span><select id="srcSel"></select></label>
+      <label class="field" for="modelSel"><span class="label">인식 모델</span><select id="modelSel">
+        <option value="long">long (중간 결과 자주)</option><option value="chirp_3">chirp_3 (중간 결과 드묾)</option></select></label>
+      <label class="toggle" for="glossChk"><input type="checkbox" id="glossChk" checked><span></span>용어집 적용</label>
+      <label class="toggle" for="interimChk"><input type="checkbox" id="interimChk" checked><span></span>중간 번역</label>
+      <div class="spacer"></div>
+      <span class="status" id="status" role="status"><i></i><span id="statusTxt">대기</span></span>
+      <button type="button" id="startBtn">시작</button>
+    </div>
+    <fieldset id="targetsBox">
+      <legend class="label">번역할 언어 (3개 이상)</legend>
+      <div class="chips" id="targets"></div>
+    </fieldset>
+    <div class="hint" id="hint" hidden>번역할 언어를 3개 이상 고르면 시작할 수 있습니다.</div>
+    <div class="glnote" id="modelNote" hidden></div>
+    <div class="hint" id="errLine" role="alert" hidden></div>
+    <div class="glrow">
+      <span class="label">용어집</span>
+      <span class="glstate" id="glState" role="status">불러오는 중…</span>
+      <div class="spacer"></div>
+      <input type="file" id="glFile" accept=".csv,text/csv" hidden>
+      <button type="button" class="upbtn" id="upBtn">용어집 업로드…</button>
+    </div>
+    <div class="glnote" id="glNote" hidden></div>
+  </section>
+
+  <section class="stage" id="stage" aria-label="자막 화면">
+    <div class="pane orig">
+      <header><h3>원문</h3><span class="sub" id="origLang"></span><div class="meter idle" id="meter" aria-hidden="true"></div></header>
+      <ul class="lines" id="origLines" aria-live="polite"></ul>
+    </div>
+    <div class="grid" id="trGrid"></div>
+    <p class="foot">같은 번호는 같은 문장입니다. 줄에 마우스를 올리거나 누르면 원문과 번역이 함께 강조됩니다. 회색 줄은 말하는 중의 중간 번역이고, 문장이 확정되면 확정 번역으로 바뀝니다. 줄 끝의 ms는 번역에 걸린 시간입니다. 노란 표시는 용어집으로 바뀐 용어입니다.</p>
+  </section>
+</div>
+
+<script>
+"use strict";
+const LANGS = [["ko", "한국어"], ["en", "영어"], ["zh-CN", "중국어 간체"], ["es", "스페인어"], ["hi", "힌디어"],
+  ["pt", "포르투갈어"], ["ru", "러시아어"], ["ja", "일본어"], ["fr", "프랑스어"], ["de", "독일어"]];
+const NAME = Object.fromEntries(LANGS);
+// long 모델이 구문 힌트(adaptation)를 거부하는 원문 언어(server.js의 NO_HINTS와 같은 목록)
+const LONG_NO_HINTS = ["zh-CN", "hi", "ru", "ko"];
+const MAX_LINES = 300; // ponytail: 매 메시지마다 목록을 다시 그린다. 줄 수를 제한해 둔다. 길어지면 줄 단위 갱신으로 바꾼다
+const $ = (id) => document.getElementById(id);
+const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+
+const st = {
+  src: "ko", targets: new Set(["en", "ja", "zh-CN"]), glossary: true, model: "long", interimTr: true,
+  running: false, active: [], // active = 시작할 때 고정한 대상 언어(진행 중에는 바꿀 수 없음)
+  ws: null, conn: 0, startMsg: null, phase: "idle", speaking: false, interim: "",
+  lines: [], order: [], tr: new Map(), fresh: new Set(), hl: null, // order = 번역 칸의 줄 순서(중간 번역 포함)
+  gl: { state: "loading" },
+};
+
+/* ---------- 컨트롤 ---------- */
+for (const [c, n] of LANGS) $("srcSel").add(new Option(n, c));
+$("srcSel").value = st.src;
+for (const [c, n] of LANGS) {
+  const label = el("label", "chip"), input = el("input");
+  input.type = "checkbox"; input.value = c; input.id = "tg-" + c; label.htmlFor = input.id;
+  label.append(input, el("span", null, n));
+  $("targets").append(label);
+}
+const targetList = () => LANGS.map((l) => l[0]).filter((c) => c !== st.src && st.targets.has(c));
+
+function syncControls() {
+  for (const [c] of LANGS) {
+    const box = $("tg-" + c);
+    box.classList.toggle("src", c === st.src);
+    box.disabled = c === st.src || st.running;
+    box.checked = c !== st.src && st.targets.has(c);
+  }
+  const enough = targetList().length >= 3, updating = st.gl.state === "updating";
+  $("srcSel").disabled = $("modelSel").disabled = st.running;
+  $("modelNote").hidden = !(st.model === "long" && LONG_NO_HINTS.includes(st.src));
+  $("modelNote").textContent = `long 모델은 ${NAME[st.src]} 원문에서 구문 힌트(용어집 원문 열)를 지원하지 않아 힌트 없이 인식합니다. 힌트가 필요하면 chirp_3를 고르세요.`;
+  $("hint").hidden = enough || st.running;
+  $("startBtn").disabled = !st.running && (!enough || updating);
+  $("startBtn").textContent = st.running ? "정지" : "시작";
+  $("startBtn").classList.toggle("stop", st.running);
+  const PHASE = { idle: "대기", connecting: "연결 중", ready: "연결됨", reconnecting: "재연결 중" };
+  $("statusTxt").textContent = st.phase === "ready" && st.speaking ? "듣는 중" : PHASE[st.phase];
+  $("status").classList.toggle("on", st.running && st.phase === "ready");
+  $("origLang").textContent = NAME[st.src];
+  $("meter").classList.toggle("idle", !st.running);
+  $("upBtn").disabled = st.running || updating || st.gl.state === "none" || st.gl.state === "loading";
+  $("glNote").hidden = !st.running && !updating;
+  $("glNote").textContent = st.running ? "진행 중에는 용어집을 올릴 수 없습니다. 정지한 뒤 올리세요." : "교체가 끝날 때까지 시작할 수 없습니다.";
+}
+$("srcSel").addEventListener("change", (e) => { st.src = e.target.value; syncControls(); renderAll(); });
+$("targets").addEventListener("change", (e) => { e.target.checked ? st.targets.add(e.target.value) : st.targets.delete(e.target.value); syncControls(); renderPanes(); });
+$("modelSel").addEventListener("change", (e) => { st.model = e.target.value; syncControls(); });
+// 용어집·중간 번역 설정은 진행 중에도 바꿀 수 있다. 다음 번역 호출부터 반영
+function sendSettings() {
+  st.glossary = $("glossChk").checked; st.interimTr = $("interimChk").checked;
+  if (st.startMsg) Object.assign(st.startMsg, { glossary: st.glossary, interim: st.interimTr }); // 재연결 때도 바뀐 값으로 시작
+  send({ type: "settings", glossary: st.glossary, interim: st.interimTr });
+}
+$("glossChk").addEventListener("change", sendSettings);
+$("interimChk").addEventListener("change", sendSettings);
+$("startBtn").addEventListener("click", () => (st.running ? stop() : start()));
+function showError(msg) { $("errLine").textContent = msg || ""; $("errLine").hidden = !msg; }
+
+/* ---------- 용어집 줄 ---------- */
+const pad = (n) => String(n).padStart(2, "0");
+const fmtTime = (iso) => { const d = new Date(iso); return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+let lastReady = null;
+function setGl(g) {
+  st.gl = g;
+  if (g.terms != null) lastReady = g;
+  const box = $("glState");
+  box.replaceChildren();
+  const BADGE = { ready: ["완료", ""], updating: ["교체 중", "wait"], failed: ["실패", "bad"], none: ["없음", "off"], loading: ["확인 중", "off"] };
+  const [b, cls] = BADGE[g.state] || BADGE.failed;
+  box.append(el("b", "badge " + cls, b), " ");
+  const info = lastReady ? `${lastReady.terms}개 · ${fmtTime(lastReady.updatedAt)} 갱신` : "";
+  if (g.state === "ready") box.append(`용어집: ${info}`);
+  else if (g.state === "updating") box.append("용어집 교체 중… (몇 분 걸릴 수 있음)");
+  else if (g.state === "none") box.append("용어집 없음");
+  else if (g.state === "loading") box.append("불러오는 중…");
+  else box.append(el("span", "err", g.error || "알 수 없는 오류"), info ? ` 현재 용어집: ${info}` : "");
+  syncControls();
+  if (g.state === "updating" && !g.local) setTimeout(loadGl, 5000); // 다른 창에서 시작한 교체는 끝날 때까지 확인(이 창의 업로드는 POST 응답을 기다린다)
+}
+async function loadGl() {
+  try { const r = await fetch("/glossary"); setGl(await r.json()); }
+  catch (e) { setGl({ state: "failed", error: "용어집 상태를 불러오지 못했습니다" }); }
+}
+$("upBtn").addEventListener("click", () => $("glFile").click());
+$("glFile").addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  e.target.value = "";
+  if (!file) return;
+  if (file.size > 1024 * 1024) return setGl({ state: "failed", error: "파일이 1MB를 넘습니다" });
+  setGl({ state: "updating", local: true });
+  try {
+    // File을 그대로 보낸다(file.text()는 UTF-8이 아닌 바이트를 바꿔 버려 서버 검사가 소용없어진다)
+    const r = await fetch("/glossary", { method: "POST", headers: { "Content-Type": "text/csv" }, body: file });
+    const j = await r.json();
+    setGl(r.ok ? j : { state: "failed", error: j.error || `오류 ${r.status}` });
+  } catch {
+    setGl({ state: "failed", error: "서버에 연결하지 못했습니다" });
+  }
+});
+
+/* ---------- 자막 렌더 ---------- */
+// 번역 텍스트는 textContent로 넣고, terms 위치만 <mark>로 감싼다
+function markTerms(node, text, terms) {
+  const words = (terms || []).filter(Boolean).sort((a, b) => b.length - a.length);
+  if (!words.length) { node.textContent = text; return; }
+  const re = new RegExp(words.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"), "gi");
+  let last = 0;
+  for (const m of text.matchAll(re)) {
+    node.append(text.slice(last, m.index), el("mark", "term", m[0]));
+    last = m.index + m[0].length;
+  }
+  node.append(text.slice(last));
+}
+function row(key, label, fill, ms, cls) {
+  const li = el("li", [cls, st.hl === key ? "hl" : ""].filter(Boolean).join(" "));
+  li.dataset.key = key;
+  const txt = el("span", "txt");
+  fill(txt);
+  li.append(el("span", "no", label), txt, ms != null ? el("span", "ms", ms + "ms") : el("span"));
+  return li;
+}
+function renderOriginal() {
+  const ul = $("origLines");
+  const items = st.lines.map((l) => row(l.key, l.label, (t) => (t.textContent = l.text)));
+  if (st.running && (st.interim || st.speaking)) items.push(row(st.interimKey || "interim", "", (t) => (t.textContent = st.interim || "듣는 중…"), null, "interim"));
+  if (!items.length) items.push(el("li", "empty", st.running ? "말하면 확정된 문장이 여기에 나옵니다." : "시작을 누르고 마이크로 말하세요."));
+  ul.replaceChildren(...items);
+  ul.scrollTop = ul.scrollHeight;
+}
+function renderPanes() {
+  const langs = st.running ? st.active : targetList();
+  const grid = $("trGrid");
+  if (!langs.length) return grid.replaceChildren(el("p", "empty", "번역할 언어를 고르세요."));
+  grid.replaceChildren(...langs.map((lang) => {
+    const pane = el("div", "pane tr"), head = el("header"), ul = el("ul", "lines");
+    head.append(el("h3", null, NAME[lang]), el("span", "sub", "번역"));
+    ul.lang = lang;
+    const items = [];
+    for (const l of st.order) {
+      const t = st.tr.get(l.key + ":" + lang);
+      if (!t) continue;
+      const cls = [st.fresh.has(l.key + ":" + lang) ? "new" : "", t.interim ? "interim" : ""].filter(Boolean).join(" ");
+      items.push(t.error ? row(l.key, l.label, (n) => (n.textContent = t.error), null, "err " + cls)
+        : row(l.key, l.label, (n) => markTerms(n, t.text, t.terms), t.ms, cls));
+    }
+    if (!items.length) items.push(el("li", "empty", "번역을 기다리는 중입니다."));
+    ul.replaceChildren(...items);
+    pane.append(head, ul);
+    return pane;
+  }));
+  st.fresh.clear();
+  grid.querySelectorAll(".lines").forEach((ul) => (ul.scrollTop = ul.scrollHeight));
+}
+function renderAll() { renderOriginal(); renderPanes(); }
+
+function setHl(key) {
+  st.hl = key;
+  document.querySelectorAll("#stage li[data-key]").forEach((li) => li.classList.toggle("hl", key !== null && li.dataset.key === key));
+}
+$("stage").addEventListener("mouseover", (e) => { const li = e.target.closest("li[data-key]"); setHl(li ? li.dataset.key : null); });
+$("stage").addEventListener("mouseleave", () => setHl(null));
+$("stage").addEventListener("click", (e) => { const li = e.target.closest("li[data-key]"); setHl(li ? li.dataset.key : null); });
+
+/* ---------- 레벨 미터 ---------- */
+const BARS = 32;
+for (let i = 0; i < BARS; i++) $("meter").append(el("i"));
+const bars = [...$("meter").children], levels = new Array(BARS).fill(0);
+function meter(buf) {
+  const a = new Int16Array(buf);
+  let s = 0;
+  for (let i = 0; i < a.length; i++) s += a[i] * a[i];
+  levels.shift();
+  levels.push(Math.min(1, Math.sqrt(s / a.length) / 4000));
+  bars.forEach((b, i) => (b.style.height = Math.max(2, levels[i] * 26) + "px"));
+}
+function meterReset() { levels.fill(0); bars.forEach((b) => (b.style.height = "2px")); }
+
+/* ---------- 마이크 → AudioWorklet → WebSocket ---------- */
+// 100ms(1,600샘플) Int16 조각을 메인 스레드로 보낸다. 16kHz로의 변환은 AudioContext({sampleRate:16000})가 한다
+const WORKLET = `
+class Pcm16 extends AudioWorkletProcessor {
+  constructor() { super(); this.buf = new Int16Array(1600); this.n = 0; }
+  process(inputs) {
+    const ch = inputs[0] && inputs[0][0];
+    if (ch) for (let i = 0; i < ch.length; i++) {
+      const v = Math.max(-1, Math.min(1, ch[i]));
+      this.buf[this.n++] = v < 0 ? v * 0x8000 : v * 0x7fff;
+      if (this.n === 1600) { this.port.postMessage(this.buf.buffer, [this.buf.buffer]); this.buf = new Int16Array(1600); this.n = 0; }
+    }
+    return true;
+  }
+}
+registerProcessor("pcm16", Pcm16);`;
+let audio = null;
+async function startMic() {
+  const media = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } });
+  // ponytail: 마이크와 다른 샘플레이트의 AudioContext 연결은 Chrome 기준. Firefox도 필요하면 worklet 안에서 직접 다운샘플한다
+  const ctx = new AudioContext({ sampleRate: 16000 });
+  await ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([WORKLET], { type: "text/javascript" })));
+  const node = new AudioWorkletNode(ctx, "pcm16");
+  node.port.onmessage = (e) => {
+    meter(e.data);
+    if (st.ws && st.ws.readyState === WebSocket.OPEN && st.phase === "ready") st.ws.send(e.data);
+  };
+  ctx.createMediaStreamSource(media).connect(node);
+  node.connect(ctx.destination); // 출력은 무음. 연결해 두어야 process가 계속 불린다
+  audio = { media, ctx };
+}
+function stopMic() {
+  if (!audio) return;
+  audio.media.getTracks().forEach((t) => t.stop());
+  audio.ctx.close();
+  audio = null;
+  meterReset();
+}
+
+function send(m) { if (st.ws && st.ws.readyState === WebSocket.OPEN) st.ws.send(JSON.stringify(m)); }
+
+function connect() {
+  const conn = ++st.conn;
+  const ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host);
+  ws.binaryType = "arraybuffer";
+  st.ws = ws;
+  ws.onopen = () => { ws.send(JSON.stringify(st.startMsg)); };
+  ws.onmessage = (e) => onMessage(JSON.parse(e.data), conn);
+  ws.onclose = () => {
+    if (st.ws !== ws || !st.running) return;
+    // [정지] 없이 끊김: 1초 뒤 같은 start로 다시 연결(횟수 제한 없음, 끊긴 동안의 발화는 버린다)
+    st.phase = "reconnecting"; st.speaking = false; st.interim = "";
+    syncControls(); renderOriginal();
+    setTimeout(() => { if (st.running && st.ws === ws) connect(); }, 1000);
+  };
+}
+
+function onMessage(m, conn) {
+  // 서버의 id는 연결마다 1부터 다시 시작하므로 연결 번호와 함께 줄을 구분한다
+  const key = conn + "-" + m.id, label = conn > 1 ? key : String(m.id);
+  if (m.type === "started") { st.phase = "ready"; showError(""); syncControls(); }
+  else if (m.type === "vad") { st.speaking = m.speaking; renderOriginal(); syncControls(); }
+  else if (m.type === "interim") { st.interim = m.text; st.interimKey = key; renderOriginal(); }
+  else if (m.type === "final") {
+    st.interim = "";
+    st.lines.push({ key, label, text: m.text });
+    if (st.lines.length > MAX_LINES) st.lines.shift();
+    addOrder(key, label);
+    renderOriginal();
+  } else if (m.type === "translation" || (m.type === "error" && m.lang && m.id)) {
+    const k = key + ":" + m.lang, prev = st.tr.get(k);
+    if (m.interim && prev && !prev.interim) return; // 확정 번역은 늦게 온 중간 번역으로 덮지 않는다(서버도 버리지만 한 번 더)
+    st.tr.set(k, m.type === "error" ? { error: "번역 실패: " + m.message } : m);
+    if (!m.interim) st.fresh.add(k); // 중간 번역은 자주 바뀌므로 도착 효과를 주지 않는다
+    addOrder(key, label);
+    renderPanes();
+  } else if (m.type === "error") {
+    showError(m.message);
+  }
+}
+
+function addOrder(key, label) {
+  if (st.order.some((o) => o.key === key)) return;
+  st.order.push({ key, label });
+  if (st.order.length > MAX_LINES) st.order.shift();
+}
+
+async function start() {
+  if (targetList().length < 3 || st.gl.state === "updating") return;
+  st.running = true; st.active = targetList(); st.phase = "connecting";
+  st.lines = []; st.order = []; st.tr.clear(); st.interim = ""; st.speaking = false; st.hl = null;
+  st.startMsg = { type: "start", source: st.src, targets: st.active, glossary: st.glossary, interim: st.interimTr, model: st.model };
+  showError(""); syncControls(); renderAll();
+  try { await startMic(); }
+  catch (e) { stop(); return showError("마이크를 쓸 수 없습니다: " + e.message); }
+  if (st.running) connect();
+}
+function stop() {
+  st.running = false; st.phase = "idle"; st.speaking = false; st.interim = "";
+  send({ type: "stop" });
+  const ws = st.ws; st.ws = null;
+  if (ws) setTimeout(() => ws.close(), 3000); // 정지 직전 발화의 final·번역을 잠시 더 받는다
+  stopMic();
+  syncControls(); renderAll();
+}
+
+syncControls(); renderAll(); loadGl();
+</script>
+</html>

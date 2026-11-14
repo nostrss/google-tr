@@ -1,0 +1,704 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>다국어 실시간 자막 시안</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* 레이아웃: 상단 안내 띠 → 컨트롤 → 원문 자막(넓게) → 언어별 번역 칸(격자, 좁으면 세로 쌓임) → 동작 원리 흐름도 */
+#mockup-root {
+  --bg: #eaeef2;
+  --surface: #ffffff;
+  --ink: #152230;
+  --muted: #5a6877;
+  --line: #d2dae2;
+  --accent: #0b6870;
+  --accent-soft: #d6ecec;
+  --live: #c33a2c;
+  --interim: #8995a2;
+  --term-bg: #ffe27a;
+  --term-ink: #3a2c00;
+  --hl: #fff4cc;
+  --notice-bg: #fdf0d8;
+  --notice-ink: #6a4300;
+  --font: "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", "Noto Sans CJK KR", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) #mockup-root {
+    --bg: #0f161d; --surface: #17212b; --ink: #e6edf3; --muted: #9aa8b6; --line: #2a3946;
+    --accent: #5cc4bd; --accent-soft: #163a3c; --live: #ff6d5f; --interim: #6f7f8e;
+    --term-bg: #5b4a0e; --term-ink: #ffe9a6; --hl: #2c3320; --notice-bg: #3a2c10; --notice-ink: #ffd88a;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] #mockup-root {
+  --bg: #0f161d; --surface: #17212b; --ink: #e6edf3; --muted: #9aa8b6; --line: #2a3946;
+  --accent: #5cc4bd; --accent-soft: #163a3c; --live: #ff6d5f; --interim: #6f7f8e;
+  --term-bg: #5b4a0e; --term-ink: #ffe9a6; --hl: #2c3320; --notice-bg: #3a2c10; --notice-ink: #ffd88a;
+  color-scheme: dark;
+}
+#mockup-root, #mockup-root * { box-sizing: border-box; }
+#mockup-root [hidden] { display: none !important; }
+#mockup-root {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font: 15px/1.55 var(--font);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 20px 48px;
+}
+#mockup-root .wrap { max-width: 1120px; margin: 0 auto; display: grid; gap: 20px; }
+#mockup-root h1, #mockup-root h2 { text-wrap: balance; margin: 0; }
+#mockup-root h1 { font-size: 1.5rem; font-weight: 700; letter-spacing: -0.01em; }
+#mockup-root h2 { font-size: 1.15rem; font-weight: 700; }
+#mockup-root .lede { margin: 4px 0 0; color: var(--muted); max-width: 65ch; }
+
+#mockup-root .notice {
+  display: flex; gap: 10px; align-items: flex-start;
+  background: var(--notice-bg); color: var(--notice-ink);
+  border: 1px solid color-mix(in srgb, var(--notice-ink) 30%, transparent);
+  border-radius: 10px; padding: 10px 14px; font-weight: 600;
+}
+#mockup-root .notice b { flex: none; border: 1.5px solid currentColor; border-radius: 4px; padding: 0 6px; font-size: .8rem; line-height: 1.5; margin-top: 2px; }
+
+/* 컨트롤 */
+#mockup-root .controls {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 14px;
+  padding: 16px; display: grid; gap: 14px;
+}
+#mockup-root .row { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: center; }
+#mockup-root .field { display: flex; gap: 8px; align-items: center; }
+#mockup-root .label { color: var(--muted); font-size: .88rem; font-weight: 600; }
+#mockup-root select, #mockup-root button { font: inherit; color: inherit; }
+#mockup-root select { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; }
+#mockup-root fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
+#mockup-root legend { padding: 0; margin-bottom: 6px; }
+#mockup-root .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+#mockup-root .chip { position: relative; }
+#mockup-root .chip input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+#mockup-root .chip span {
+  display: inline-flex; align-items: center; gap: 6px;
+  border: 1px solid var(--line); border-radius: 999px; padding: 4px 12px; font-size: .9rem;
+  background: var(--bg); user-select: none;
+}
+#mockup-root .chip span::before { content: ""; width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid var(--muted); }
+#mockup-root .chip input:checked + span { background: var(--accent-soft); border-color: var(--accent); color: var(--ink); }
+#mockup-root .chip input:checked + span::before { background: var(--accent); border-color: var(--accent); }
+#mockup-root .chip input:disabled + span { opacity: .4; text-decoration: line-through; }
+#mockup-root .chip input:focus-visible + span, #mockup-root button:focus-visible, #mockup-root select:focus-visible, #mockup-root .toggle input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
+#mockup-root .toggle { display: inline-flex; gap: 8px; align-items: center; cursor: pointer; font-weight: 600; position: relative; }
+#mockup-root .toggle input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+#mockup-root .toggle span { width: 38px; height: 22px; border-radius: 999px; background: var(--line); position: relative; transition: background .2s; flex: none; }
+#mockup-root .toggle span::after { content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: var(--surface); transition: transform .2s; }
+#mockup-root .toggle input:checked + span { background: var(--accent); }
+#mockup-root .toggle input:checked + span::after { transform: translateX(16px); }
+#mockup-root #mk-startBtn {
+  border: 0; border-radius: 10px; padding: 9px 20px; font-weight: 700; cursor: pointer;
+  background: var(--accent); color: var(--surface);
+}
+#mockup-root #mk-startBtn.stop { background: var(--live); }
+#mockup-root #mk-startBtn:disabled { opacity: .45; cursor: not-allowed; }
+#mockup-root .status { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; color: var(--muted); }
+#mockup-root .status i { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
+#mockup-root .status.on { color: var(--live); }
+#mockup-root .status.on i { background: var(--live); animation: mk-pulse 1.2s infinite; }
+@keyframes mk-pulse { 50% { opacity: .3; } }
+#mockup-root .hint { color: var(--live); font-size: .88rem; font-weight: 600; }
+#mockup-root .spacer { flex: 1; }
+#mockup-root details.gloss { font-size: .9rem; min-width: 0; }
+#mockup-root details.gloss summary { cursor: pointer; color: var(--accent); font-weight: 600; }
+#mockup-root .tablebox { overflow-x: auto; margin-top: 8px; }
+#mockup-root table { border-collapse: collapse; font-size: .86rem; min-width: 560px; }
+#mockup-root th, #mockup-root td { text-align: left; padding: 5px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+#mockup-root th { color: var(--muted); font-weight: 600; }
+#mockup-root tr.new td { animation: mk-arrive 1.6s ease-out; }
+/* 용어집 줄: 상태 · 업로드 */
+#mockup-root .glrow { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; padding-top: 12px; border-top: 1px solid var(--line); }
+#mockup-root .glstate { font-size: .92rem; min-width: 0; overflow-wrap: anywhere; }
+#mockup-root .glstate .err { color: var(--live); font-weight: 600; }
+#mockup-root .badge { display: inline-block; font-size: .76rem; font-weight: 700; border-radius: 999px; padding: 0 9px; margin-right: 4px; background: var(--accent-soft); color: var(--accent); border: 1px solid var(--accent); }
+#mockup-root .badge.wait { background: var(--notice-bg); color: var(--notice-ink); border-color: currentColor; }
+#mockup-root .badge.bad { background: transparent; color: var(--live); border-color: currentColor; }
+#mockup-root .badge.off { background: transparent; color: var(--muted); border-color: var(--line); }
+#mockup-root .upbtn { border: 1px solid var(--accent); border-radius: 10px; padding: 6px 14px; font-weight: 700; cursor: pointer; background: var(--surface); color: var(--accent); }
+#mockup-root .linkbtn { border: 0; background: none; padding: 0; cursor: pointer; color: var(--muted); font-size: .85rem; text-decoration: underline; text-underline-offset: 3px; }
+#mockup-root .upbtn:disabled, #mockup-root .linkbtn:disabled { opacity: .45; cursor: not-allowed; }
+#mockup-root .glnote { color: var(--muted); font-size: .85rem; margin-top: -6px; }
+
+/* 자막 무대 */
+#mockup-root .stage { display: grid; gap: 14px; }
+#mockup-root .pane { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; min-width: 0; display: flex; flex-direction: column; }
+#mockup-root .pane header { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+#mockup-root .pane header h3 { margin: 0; font-size: .95rem; }
+#mockup-root .pane header .sub { color: var(--muted); font-size: .8rem; }
+#mockup-root .lines { list-style: none; margin: 0; padding: 8px 6px; overflow-y: auto; display: grid; gap: 2px; align-content: start; }
+#mockup-root .orig .lines { max-height: 19rem; min-height: 9rem; }
+#mockup-root .tr .lines { max-height: 15rem; min-height: 7rem; }
+#mockup-root .lines li { display: grid; grid-template-columns: 1.6rem 1fr auto; gap: 8px; align-items: baseline; padding: 5px 8px; border-radius: 8px; cursor: default; }
+#mockup-root .lines li.hl { background: var(--hl); }
+#mockup-root .no { font: 600 .72rem var(--mono); color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; }
+#mockup-root .txt { min-width: 0; overflow-wrap: anywhere; }
+#mockup-root .orig .txt { font-size: clamp(1.1rem, 2.1vw, 1.45rem); line-height: 1.45; font-weight: 650; }
+#mockup-root .orig li.interim .txt { color: var(--interim); font-weight: 400; }
+#mockup-root .orig li.interim .txt::after { content: ""; display: inline-block; width: 2px; height: 1em; background: var(--interim); margin-left: 3px; vertical-align: -2px; animation: mk-pulse 1s infinite; }
+#mockup-root .tr .txt { font-size: 1.04rem; line-height: 1.5; }
+#mockup-root .ms { font: .72rem var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+#mockup-root mark.term { background: var(--term-bg); color: var(--term-ink); border-radius: 3px; padding: 0 2px; }
+#mockup-root .orig mark.term { background: none; color: inherit; padding: 0; text-decoration: underline dotted var(--accent) 2px; text-underline-offset: 4px; }
+#mockup-root li.new { animation: mk-arrive .7s ease-out; }
+@keyframes mk-arrive { from { background: var(--accent-soft); } }
+#mockup-root .empty { color: var(--muted); padding: 14px; font-size: .92rem; }
+#mockup-root .grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 250px), 1fr)); }
+
+/* 레벨 미터 */
+#mockup-root .meter { display: flex; align-items: center; gap: 2px; height: 26px; margin-left: auto; width: min(180px, 40%); }
+#mockup-root .meter i { flex: 1; background: var(--accent); border-radius: 2px; height: 2px; opacity: .85; transition: height .08s linear; }
+#mockup-root .meter.idle i { background: var(--line); }
+#mockup-root .foot { color: var(--muted); font-size: .82rem; margin: 0; }
+
+/* 흐름도 */
+#mockup-root .flow { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 16px; display: grid; gap: 12px; }
+#mockup-root .svgbox { overflow-x: auto; }
+#mockup-root #mk-flow { display: block; width: 100%; min-width: 760px; height: auto; font-family: var(--font); }
+#mockup-root #mk-flow .node rect { fill: var(--bg); stroke: var(--line); stroke-width: 1.5; transition: stroke .2s, fill .2s; }
+#mockup-root #mk-flow .node.on rect { stroke: var(--accent); fill: var(--accent-soft); }
+#mockup-root #mk-flow .t1 { fill: var(--ink); font-size: 14px; font-weight: 700; }
+#mockup-root #mk-flow .t2 { fill: var(--muted); font-size: 11px; }
+#mockup-root #mk-flow .edge { stroke: var(--muted); stroke-width: 1.5; fill: none; }
+#mockup-root #mk-flow .faint { stroke: var(--line); stroke-width: 1.5; fill: none; }
+#mockup-root #mk-flow .dash { stroke: var(--muted); stroke-width: 1.5; fill: none; stroke-dasharray: 4 4; }
+#mockup-root #mk-flow .ah { fill: var(--muted); }
+#mockup-root #mk-flow .elab { fill: var(--muted); font-size: 11px; }
+#mockup-root #mk-flow .group { fill: none; stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 6 4; }
+#mockup-root #mk-flow .pill rect { fill: var(--surface); stroke: var(--line); stroke-width: 1.2; transition: fill .2s, stroke .2s; }
+#mockup-root #mk-flow .pill.on rect { fill: var(--accent-soft); stroke: var(--accent); }
+#mockup-root #mk-flow .pill text { fill: var(--ink); font-size: 11.5px; }
+#mockup-root #mk-flow .pill .pms { fill: var(--accent); font-family: var(--mono); font-size: 10.5px; }
+#mockup-root #mk-flow .gl rect { fill: var(--term-bg); stroke: var(--term-ink); stroke-width: 1.2; transition: opacity .2s; }
+#mockup-root #mk-flow .gl text { fill: var(--term-ink); }
+#mockup-root #mk-flow.gloff .gl { opacity: .35; }
+#mockup-root #mk-flow.gloff .gline { opacity: .3; }
+#mockup-root #mk-flow .dot-a { fill: var(--accent); }
+#mockup-root #mk-flow .dot-i { fill: var(--interim); }
+#mockup-root #mk-flow .dot-t { fill: var(--live); }
+#mockup-root #mk-flow .up path { stroke: var(--muted); stroke-width: 1.5; fill: none; stroke-dasharray: 3 4; opacity: .6; }
+#mockup-root #mk-flow .up rect { fill: var(--bg); stroke: var(--line); stroke-width: 1.5; }
+#mockup-root #mk-flow .up.on path { stroke: var(--accent); stroke-width: 2; opacity: 1; animation: mk-march .8s linear infinite; }
+#mockup-root #mk-flow .up.on rect { fill: var(--accent-soft); stroke: var(--accent); }
+#mockup-root #mk-flow .up.on + .gl rect { stroke: var(--accent); stroke-width: 2.5; }
+@keyframes mk-march { to { stroke-dashoffset: -14; } }
+#mockup-root .steps { margin: 0; padding-left: 1.3rem; display: grid; gap: 4px; color: var(--muted); font-size: .9rem; max-width: 80ch; }
+#mockup-root .steps b { color: var(--ink); }
+
+@media (prefers-reduced-motion: reduce) {
+  #mockup-root *, #mockup-root *::before, #mockup-root *::after { animation: none !important; transition: none !important; }
+}
+/* 단독 실행용 바탕. 다른 페이지에 합칠 때는 삭제 */
+body { margin: 0; background: #eaeef2; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) body { background: #0f161d; } }
+:root[data-theme="dark"] body { background: #0f161d; }
+</style>
+
+<div id="mockup-root"><div class="wrap">
+  <div>
+    <h1>다국어 실시간 자막</h1>
+    <p class="lede">연사가 말하면 원문 자막과 여러 언어의 번역 자막이 한 화면에 실시간으로 나오는 화면을 미리 보여 주는 시안입니다.</p>
+  </div>
+
+  <div class="notice" role="note"><b>시안</b><span>시안입니다. 실제 음성 인식·번역 결과가 아닌 샘플 데이터입니다. 마이크도 쓰지 않으며, 미리 넣어 둔 한국어 대본을 재생합니다.</span></div>
+
+  <section class="controls" aria-label="자막 설정">
+    <div class="row">
+      <label class="field" for="mk-srcSel"><span class="label">원문 언어</span>
+        <select id="mk-srcSel"></select>
+      </label>
+      <label class="toggle" for="mk-glossChk"><input type="checkbox" id="mk-glossChk" checked><span></span>용어집 적용</label>
+      <div class="spacer"></div>
+      <span class="status" id="mk-status" role="status"><i></i><span id="mk-statusTxt">대기</span></span>
+      <button type="button" id="mk-startBtn">시작</button>
+    </div>
+    <fieldset>
+      <legend class="label">번역할 언어 (3개 이상)</legend>
+      <div class="chips" id="mk-targets"></div>
+    </fieldset>
+    <div class="hint" id="mk-hint" hidden>번역할 언어를 3개 이상 고르면 시작할 수 있습니다.</div>
+    <div class="glrow">
+      <span class="label">용어집</span>
+      <span class="glstate" id="mk-glState" role="status"></span>
+      <div class="spacer"></div>
+      <button type="button" class="linkbtn" id="mk-badBtn">형식이 틀린 파일 올려 보기</button>
+      <button type="button" class="upbtn" id="mk-upBtn">용어집 업로드…</button>
+    </div>
+    <div class="glnote" id="mk-glNote" hidden></div>
+    <details class="gloss" id="mk-glossDetails">
+      <summary>용어집 내용 보기</summary>
+      <div class="tablebox">
+        <table>
+          <thead><tr><th>원문</th><th>규칙</th><th>영어</th><th>일본어</th><th>중국어 간체</th><th>스페인어</th></tr></thead>
+          <tbody>
+            <tr><td>루멘 라이브</td><td>제품명, 번역하지 않음</td><td>Lumen Live</td><td>Lumen Live</td><td>Lumen Live</td><td>Lumen Live</td></tr>
+            <tr><td>실시간 자막</td><td>지정 번역어 사용</td><td>live captions</td><td lang="ja">ライブキャプション</td><td lang="zh-Hans">实时字幕</td><td>subtítulos en directo</td></tr>
+            <tr><td>화자 분리</td><td>지정 번역어 사용</td><td>speaker diarization</td><td lang="ja">話者ダイアライゼーション</td><td lang="zh-Hans">说话人日志</td><td>diarización de hablantes</td></tr>
+            <tr id="mk-glPoteto" hidden><td>포테토</td><td>고유명사, 번역하지 않음</td><td>Poteto</td><td>Poteto</td><td>Poteto</td><td>Poteto</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </details>
+  </section>
+
+  <section class="stage" id="mk-stage" aria-label="자막 화면">
+    <div class="pane orig">
+      <header>
+        <h3>원문</h3><span class="sub" id="mk-origLang">한국어</span>
+        <div class="meter idle" id="mk-meter" aria-hidden="true"></div>
+      </header>
+      <ul class="lines" id="mk-origLines" aria-live="polite"></ul>
+    </div>
+    <div class="grid" id="mk-trGrid"></div>
+    <p class="foot">같은 번호는 같은 문장입니다. 줄에 마우스를 올리거나 누르면 원문과 번역이 함께 강조됩니다. 줄 끝의 ms는 번역에 걸린 시간이며, 시안에서는 언어별 차이가 보이도록 3배 느리게 재생합니다.</p>
+  </section>
+
+  <section class="flow" aria-labelledby="mk-flowTitle">
+    <h2 id="mk-flowTitle">동작 원리</h2>
+    <div class="svgbox"><svg id="mk-flow" viewBox="0 0 1000 340" role="img" aria-label="마이크에서 화면까지 데이터가 흐르는 과정"></svg></div>
+    <ol class="steps">
+      <li><b>브라우저</b>가 마이크 소리를 짧은 오디오 조각으로 나눠 WebSocket으로 서버에 계속 보냅니다.</li>
+      <li><b>Node.js 서버</b>가 조각을 Speech-to-Text 스트리밍 인식에 그대로 흘려보냅니다.</li>
+      <li>인식 도중의 <b>중간 결과</b>는 바로 화면에 회색 글씨로 표시됩니다.</li>
+      <li>문장이 <b>확정</b>되면 서버가 대상 언어마다 Cloud Translation(NMT)을 동시에 호출합니다. 용어집을 켜면 이 단계에서 함께 적용됩니다.</li>
+      <li>번역이 끝나는 순서대로 각 언어 칸에 표시됩니다.</li>
+      <li><b>용어집 업로드</b>(점선): 정지 중에 CSV를 올리면 서버가 형식을 검사하고 버킷에 저장한 뒤 용어집을 새 내용으로 교체합니다. 교체가 끝난 뒤 시작하면 새 용어가 쓰입니다.</li>
+    </ol>
+  </section>
+</div>
+</div>
+<script>
+(() => {
+"use strict";
+const LANGS = [
+  ["ko", "한국어", "ko"], ["en", "영어", "en"], ["zh", "중국어 간체", "zh-Hans"], ["es", "스페인어", "es"],
+  ["hi", "힌디어", "hi"], ["pt", "포르투갈어", "pt"], ["ru", "러시아어", "ru"], ["ja", "일본어", "ja"],
+  ["fr", "프랑스어", "fr"], ["de", "독일어", "de"]
+];
+const NAME = Object.fromEntries(LANGS.map(l => [l[0], l[1]]));
+const HTMLLANG = Object.fromEntries(LANGS.map(l => [l[0], l[2]]));
+
+// [[...]] = 용어집 용어. 배열 = [용어집 적용, 용어집 없이]
+const SCRIPT = [
+  { ko: "안녕하세요, 오늘은 다국어 행사에서 언어 장벽을 낮추는 방법을 이야기하겠습니다.",
+    t: { en: "Hello, today I'd like to talk about how to lower language barriers at multilingual events.",
+         ja: "こんにちは。今日は、多言語イベントで言葉の壁を低くする方法についてお話しします。",
+         zh: "大家好，今天我想谈谈如何在多语言活动中降低语言障碍。",
+         es: "Hola, hoy quiero hablar de cómo reducir las barreras lingüísticas en los eventos multilingües." } },
+  { ko: "저희 팀은 지난 1년 동안 [[루멘 라이브]]라는 [[실시간 자막]] 서비스를 만들어 왔습니다.",
+    heard: "저희 팀은 지난 1년 동안 루멘 나이브라는 실시간 자막 서비스를 만들어 왔습니다",
+    t: { en: ["Over the past year, our team has been building a [[live captions]] service called [[Lumen Live]].",
+              "Over the past year, our team has been building a real-time subtitle service called Rumen Live."],
+         ja: ["私たちのチームはこの1年間、[[Lumen Live]]という[[ライブキャプション]]サービスを開発してきました。",
+              "私たちのチームはこの1年間、ルーメンライブというリアルタイム字幕サービスを開発してきました。"],
+         zh: ["过去一年，我们团队一直在开发一款名为 [[Lumen Live]] 的[[实时字幕]]服务。",
+              "过去一年，我们团队一直在开发一款名为鲁门直播的即时字幕服务。"],
+         es: ["Durante el último año, nuestro equipo ha desarrollado un servicio de [[subtítulos en directo]] llamado [[Lumen Live]].",
+              "Durante el último año, nuestro equipo ha desarrollado un servicio de subtítulos en tiempo real llamado Lumen en Vivo."] } },
+  { ko: "연사가 말을 마치기 전에도 화면에는 인식 중인 문장이 먼저 나타납니다.",
+    heard: "연사가 말을 마치기 전에도 화면에는 인식 중인 문장이 먼저 나타납니다",
+    t: { en: "Even before the speaker finishes, the sentence being recognized appears on screen first.",
+         ja: "話し手が言い終える前から、認識中の文が先に画面に表示されます。",
+         zh: "即使演讲者还没说完，正在识别的句子也会先显示在屏幕上。",
+         es: "Incluso antes de que el orador termine, la frase que se está reconociendo aparece primero en la pantalla." } },
+  { ko: "문장이 확정되면 여러 언어로 동시에 번역해서 0.3초 안에 보여 줍니다.",
+    heard: "문장이 확정되면 여러 언어로 동시에 번역해서 영 점 삼 초 안에 보여 줍니다",
+    t: { en: "Once a sentence is finalized, it's translated into several languages at once and shown within 0.3 seconds.",
+         ja: "文が確定すると複数の言語に同時に翻訳され、0.3秒以内に表示されます。",
+         zh: "句子一旦确定，就会同时翻译成多种语言，并在0.3秒内显示出来。",
+         es: "Cuando una frase se confirma, se traduce a varios idiomas a la vez y se muestra en menos de 0,3 segundos." } },
+  { ko: "질의응답 시간에는 [[화자 분리]] 기능으로 누가 말했는지도 구분합니다.",
+    t: { en: ["During Q&A, the [[speaker diarization]] feature also tells you who said what.",
+              "During Q&A, the speaker separation feature also tells you who said what."],
+         ja: ["質疑応答では、[[話者ダイアライゼーション]]機能で誰が話したかも区別します。",
+              "質疑応答では、話者分離機能で誰が話したかも区別します。"],
+         zh: ["在问答环节，[[说话人日志]]功能还能区分是谁在发言。",
+              "在问答环节，说话人分离功能还能区分是谁在发言。"],
+         es: ["En la ronda de preguntas, la función de [[diarización de hablantes]] también distingue quién habló.",
+              "En la ronda de preguntas, la función de separación de hablantes también distingue quién habló."] } },
+  { ko: "[[루멘 라이브]]는 오늘 이 행사장에서도 시범 운영 중입니다.",
+    t: { en: ["[[Lumen Live]] is also being piloted here at this venue today.",
+              "Rumen Live is also being piloted here at this venue today."],
+         ja: ["[[Lumen Live]]は、本日この会場でも試験運用中です。",
+              "ルーメンライブは、本日この会場でも試験運用中です。"],
+         zh: ["[[Lumen Live]] 今天也在本会场试运行。",
+              "鲁门直播今天也在本会场试运行。"],
+         es: ["[[Lumen Live]] también está en fase piloto hoy en este recinto.",
+              "Lumen en Vivo también está en fase piloto hoy en este recinto."] } },
+  { ko: "다음 달에는 [[포테토]] 팀과 함께 현장 시연을 엽니다.",
+    newTerm: true, // 업로드로 추가되는 용어. 업로드 전에는 용어집을 켜도 적용되지 않음
+    t: { en: ["Next month, we'll hold an on-site demo together with the [[Poteto]] team.",
+              "Next month, we'll hold an on-site demo together with the Potato team."],
+         ja: ["来月は[[Poteto]]チームと一緒に現地デモを行います。",
+              "来月はポテトチームと一緒に現地デモを行います。"],
+         zh: ["下个月，我们将与 [[Poteto]] 团队一起举办现场演示。",
+              "下个月，我们将与土豆团队一起举办现场演示。"],
+         es: ["El próximo mes haremos una demostración presencial junto con el equipo de [[Poteto]].",
+              "El próximo mes haremos una demostración presencial junto con el equipo de Patata."] } },
+  { ko: "궁금한 점은 발표가 끝난 뒤 부스에서 편하게 물어봐 주세요.",
+    t: { en: "If you have any questions, feel free to ask us at the booth after the talk.",
+         ja: "ご質問があれば、発表後にブースでお気軽にお尋ねください。",
+         zh: "如有疑问，欢迎在演讲结束后到展位咨询。",
+         es: "Si tienen alguna pregunta, no duden en consultarnos en el stand después de la charla." } }
+];
+const SAMPLE_LANGS = ["en", "ja", "zh", "es"];
+const BASE_MS = { en: 150, ja: 175, zh: 190, es: 165, hi: 210, pt: 170, ru: 185, fr: 160, de: 168 };
+const SLOW = 3; // 시안 재생 배속(번역 지연을 눈에 보이게)
+const RM = matchMedia("(prefers-reduced-motion: reduce)");
+
+const $ = id => document.getElementById("mk-" + id);
+const st = {
+  src: "ko", targets: new Set(["en", "ja", "zh", "es"]), glossary: true,
+  running: false, run: 0, done: [], shown: new Map(), interim: null, speaking: false,
+  timers: [], hl: null, fresh: new Set(),
+  gl: { state: "ready", terms: 3, at: "11-15 14:02", error: "", poteto: false }
+};
+
+const esc = s => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const fmt = (s, g) => esc(s).replace(/\[\[(.+?)\]\]/g, g ? '<mark class="term">$1</mark>' : "$1");
+const useGl = seg => st.glossary && (!SCRIPT[seg].newTerm || st.gl.poteto);
+const trText = (seg, lang) => {
+  const v = SCRIPT[seg].t[lang];
+  if (!v) return null;
+  return Array.isArray(v) ? (useGl(seg) ? v[0] : v[1]) : v;
+};
+const latency = (seg, lang) => BASE_MS[lang] + ((seg * 53 + lang.charCodeAt(0) * 29) % 70) + (st.glossary ? 18 : 0);
+const targetList = () => LANGS.map(l => l[0]).filter(c => c !== st.src && st.targets.has(c));
+const later = (fn, ms) => { const id = setTimeout(fn, ms); st.timers.push(id); return id; };
+
+/* ---------- 컨트롤 ---------- */
+$("srcSel").innerHTML = LANGS.map(([c, n]) => `<option value="${c}">${n}</option>`).join("");
+$("targets").innerHTML = LANGS.map(([c, n]) =>
+  `<label class="chip" for="mk-tg-${c}"><input type="checkbox" id="mk-tg-${c}" value="${c}"><span>${n}</span></label>`).join("");
+
+function syncControls() {
+  for (const [c] of LANGS) {
+    const box = $("tg-" + c);
+    box.disabled = c === st.src;
+    box.checked = c !== st.src && st.targets.has(c);
+  }
+  const enough = targetList().length >= 3;
+  $("hint").hidden = enough || st.running;
+  $("startBtn").disabled = (!enough && !st.running) || st.gl.state === "updating";
+  $("startBtn").textContent = st.running ? "정지" : "시작";
+  $("startBtn").classList.toggle("stop", st.running);
+  $("status").classList.toggle("on", st.running);
+  $("statusTxt").textContent = st.running ? "듣는 중" : "대기";
+  $("origLang").textContent = NAME[st.src];
+  $("flow").classList.toggle("gloff", !st.glossary);
+  renderGl();
+}
+
+$("srcSel").addEventListener("change", e => {
+  if (st.running) stop();
+  st.src = e.target.value;
+  syncControls(); renderAll(); buildFlow();
+});
+$("targets").addEventListener("change", e => {
+  const c = e.target.value;
+  e.target.checked ? st.targets.add(c) : st.targets.delete(c);
+  if (st.running && targetList().length < 3) stop();
+  syncControls(); renderPanes(); buildFlow();
+});
+$("glossChk").addEventListener("change", e => {
+  st.glossary = e.target.checked;
+  syncControls(); renderAll(); buildFlow();
+});
+$("startBtn").addEventListener("click", () => st.running ? stop() : start());
+
+/* ---------- 용어집 업로드 (시안: 파일을 받지 않고 샘플 시나리오만 재현) ---------- */
+const GL_BADGE = { ready: ["완료", ""], updating: ["교체 중", "wait"], failed: ["실패", "bad"], none: ["없음", "off"] };
+function renderGl() {
+  const g = st.gl, [badge, cls] = GL_BADGE[g.state], info = `${g.terms}개 · ${g.at} 갱신`;
+  const h = `<b class="badge ${cls}">${badge}</b> ` + (
+    g.state === "ready" ? `용어집: ${info}` :
+    g.state === "updating" ? "용어집 교체 중… (몇 분 걸릴 수 있음. 시안에서는 4초)" :
+    g.state === "failed" ? `<span class="err">${esc(g.error)}</span> 용어집은 바뀌지 않았습니다(${info}).` :
+    "용어집 없음");
+  if ($("glState").innerHTML !== h) $("glState").innerHTML = h;
+  $("upBtn").disabled = $("badBtn").disabled = st.running || g.state === "updating" || g.state === "none";
+  $("glNote").hidden = !st.running && g.state !== "updating";
+  $("glNote").textContent = st.running ? "재생 중에는 용어집을 올릴 수 없습니다. 정지한 뒤 올리세요." : "교체가 끝날 때까지 시작할 수 없습니다.";
+  $("glPoteto").hidden = !g.poteto;
+}
+$("upBtn").addEventListener("click", () => {
+  if (st.running || st.gl.state === "updating") return;
+  st.gl.state = "updating";
+  syncControls(); buildFlow();
+  setTimeout(() => {
+    const d = new Date(), p = n => String(n).padStart(2, "0");
+    Object.assign(st.gl, { state: "ready", terms: 4, poteto: true,
+      at: `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}` });
+    $("glossDetails").open = true;
+    $("glPoteto").classList.add("new");
+    syncControls(); buildFlow();
+  }, 4000);
+});
+$("badBtn").addEventListener("click", () => {
+  if (st.running || st.gl.state === "updating") return;
+  Object.assign(st.gl, { state: "failed", error: "3행: 열이 9개입니다(10개 필요)" }); // 서버 검사 실패(400): 용어집은 그대로
+  syncControls();
+});
+
+/* ---------- 자막 렌더 ---------- */
+function rowHTML(seg, html, ms, cls) {
+  const c = [cls, st.hl === seg ? "hl" : ""].filter(Boolean).join(" ");
+  return `<li data-seg="${seg}"${c ? ` class="${c}"` : ""}><span class="no">${seg + 1}</span><span class="txt">${html}</span>${ms ? `<span class="ms">${ms}ms</span>` : "<span></span>"}</li>`;
+}
+function renderOriginal() {
+  const ul = $("origLines");
+  if (st.src !== "ko") {
+    ul.innerHTML = `<li class="empty" style="display:block">시안에는 한국어 샘플 대본만 있습니다. 원문 언어를 한국어로 바꾸면 자막이 재생됩니다.</li>`;
+    return;
+  }
+  let h = st.done.map(seg => rowHTML(seg, fmt(SCRIPT[seg].ko, useGl(seg)), 0, "")).join("");
+  if (st.interim) h += rowHTML(st.interim.seg, esc(st.interim.text), 0, "interim");
+  if (!h) h = `<li class="empty" style="display:block">시작을 누르면 샘플 대본이 재생됩니다.</li>`;
+  ul.innerHTML = h;
+  ul.scrollTop = ul.scrollHeight;
+}
+function renderPanes() {
+  const grid = $("trGrid");
+  const langs = targetList();
+  if (!langs.length) { grid.innerHTML = `<p class="empty">번역할 언어를 고르세요.</p>`; return; }
+  grid.innerHTML = langs.map(lang => {
+    let body;
+    if (st.src !== "ko" || !SAMPLE_LANGS.includes(lang)) {
+      body = `<li class="empty" style="display:block">시안에는 샘플 번역이 없습니다.${st.src === "ko" ? " 영어, 일본어, 중국어 간체, 스페인어를 고르면 샘플 번역을 볼 수 있습니다." : ""}</li>`;
+    } else {
+      body = st.done.filter(seg => st.shown.has(seg + ":" + lang))
+        .map(seg => rowHTML(seg, fmt(trText(seg, lang), useGl(seg)), st.shown.get(seg + ":" + lang),
+          st.fresh.has(seg + ":" + lang) ? "new" : "")).join("")
+        || `<li class="empty" style="display:block">번역을 기다리는 중입니다.</li>`;
+    }
+    return `<div class="pane tr"><header><h3>${NAME[lang]}</h3><span class="sub">번역</span></header><ul class="lines" lang="${HTMLLANG[lang]}">${body}</ul></div>`;
+  }).join("");
+  st.fresh.clear();
+  grid.querySelectorAll(".lines").forEach(ul => ul.scrollTop = ul.scrollHeight);
+}
+function renderAll() { renderOriginal(); renderPanes(); }
+
+// 같은 문장 강조 (마우스 올림 / 누름)
+function setHl(seg) {
+  st.hl = seg;
+  document.querySelectorAll("#mk-stage li[data-seg]").forEach(li => li.classList.toggle("hl", seg !== null && +li.dataset.seg === seg));
+}
+$("stage").addEventListener("mouseover", e => { const li = e.target.closest("li[data-seg]"); setHl(li ? +li.dataset.seg : null); });
+$("stage").addEventListener("mouseleave", () => setHl(null));
+$("stage").addEventListener("click", e => { const li = e.target.closest("li[data-seg]"); setHl(li ? +li.dataset.seg : null); });
+
+/* ---------- 레벨 미터 ---------- */
+const BARS = 32;
+$("meter").innerHTML = "<i></i>".repeat(BARS);
+const bars = [...$("meter").children];
+const levels = new Array(BARS).fill(0);
+let lastMeter = 0;
+function meterTick(now) {
+  if (!st.running) return;
+  if (now - lastMeter < (RM.matches ? 300 : 70)) return;
+  lastMeter = now;
+  levels.shift();
+  levels.push(st.speaking ? 0.3 + Math.random() * 0.7 : 0.03 + Math.random() * 0.06);
+  bars.forEach((b, i) => b.style.height = Math.max(2, levels[i] * 26) + "px");
+}
+function meterReset() { levels.fill(0); bars.forEach(b => b.style.height = "2px"); }
+
+/* ---------- 흐름도 ---------- */
+const svg = $("flow");
+const NS = "http://www.w3.org/2000/svg";
+let pills = [];
+const AUDIO_PATH = "M116 170 H476";
+const INTERIM_PATH = "M536 198 C536 338 927 338 927 198";
+function node(id, x, w, t1, t2) {
+  return `<g class="node" id="mk-n-${id}"><rect x="${x}" y="142" width="${w}" height="56" rx="10"/>
+    <text class="t1" x="${x + w / 2}" y="166" text-anchor="middle">${t1}</text>
+    <text class="t2" x="${x + w / 2}" y="184" text-anchor="middle">${t2}</text></g>`;
+}
+function buildFlow() {
+  const langs = targetList();
+  const n = Math.max(langs.length, 1);
+  const top = 100, bottom = 280, step = Math.min(32, (bottom - top) / n), h = Math.min(24, step - 3);
+  const y0 = (top + bottom) / 2 - step * (n - 1) / 2;
+  pills = langs.map((l, i) => ({ l, y: y0 + i * step, h }));
+  const fan = pills.map(p =>
+    `<path class="faint" d="M596 170 C630 170 640 ${p.y} 668 ${p.y}"/><path class="faint" d="M802 ${p.y} C836 ${p.y} 840 170 870 170"/>`).join("");
+  const pillG = pills.map(p => `<g class="pill" id="mk-p-${p.l}"><rect x="668" y="${p.y - p.h / 2}" width="134" height="${p.h}" rx="${p.h / 2}"/>
+    <text x="680" y="${p.y + 4}">${NAME[p.l]}</text><text class="pms" x="794" y="${p.y + 4}" text-anchor="end"></text></g>`).join("");
+  svg.innerHTML = `
+  <defs><marker id="mk-ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="ah" d="M0 0 L10 5 L0 10z"/></marker></defs>
+  <path class="edge" d="M116 170 H154" marker-end="url(#mk-ah)"/>
+  <path class="edge" d="M276 170 H314" marker-end="url(#mk-ah)"/>
+  <path class="edge" d="M436 170 H474" marker-end="url(#mk-ah)"/>
+  <text class="elab" x="136" y="132" text-anchor="middle">소리</text>
+  <text class="elab" x="296" y="132" text-anchor="middle">WebSocket</text>
+  <text class="elab" x="456" y="132" text-anchor="middle">오디오 스트림</text>
+  <text class="elab" x="624" y="132" text-anchor="middle">확정 문장</text>
+  ${fan}
+  <path class="dash" d="${INTERIM_PATH}" marker-end="url(#mk-ah)"/>
+  <text class="elab" x="731" y="334" text-anchor="middle">중간 결과는 번역 없이 바로 화면으로 (회색 글씨)</text>
+  <rect class="group" x="652" y="64" width="166" height="228" rx="12"/>
+  <text class="t1" x="735" y="84" text-anchor="middle" style="font-size:12.5px">번역 NMT, 언어별 병렬</text>
+  <path class="dash gline" d="M735 46 V64"/>
+  <g class="up${st.gl.state === "updating" ? " on" : ""}" id="mk-up">
+    <path d="M236 142 C236 100 356 100 356 142" marker-end="url(#mk-ah)"/>
+    <path d="M406 142 V28 H476" marker-end="url(#mk-ah)"/>
+    <path d="M588 28 H670" marker-end="url(#mk-ah)"/>
+    <rect x="478" y="10" width="110" height="36" rx="8"/>
+    <text class="t1" x="533" y="26" text-anchor="middle" style="font-size:12.5px">버킷</text>
+    <text class="t2" x="533" y="40" text-anchor="middle" style="font-size:10.5px">CSV 저장</text>
+    <text class="elab" x="296" y="98" text-anchor="middle">용어집 CSV 업로드</text>
+    <text class="elab" x="414" y="74">검사</text>
+    <text class="elab" x="629" y="21" text-anchor="middle">교체</text></g>
+  <g class="gl"><rect x="672" y="10" width="126" height="36" rx="8"/>
+    <text x="735" y="26" text-anchor="middle" style="font-size:12.5px;font-weight:700">용어집</text>
+    <text x="735" y="40" text-anchor="middle" style="font-size:10.5px">${st.gl.state === "updating" ? "교체 중" : st.glossary ? "번역에 함께 적용" : "꺼짐"}</text></g>
+  <g id="mk-dots"></g>
+  ${node("mic", 16, 100, "마이크", "연사의 목소리")}
+  ${node("browser", 156, 120, "브라우저", "오디오 조각으로 분할")}
+  ${node("server", 316, 120, "Node.js 서버", "WebSocket 수신")}
+  ${node("stt", 476, 120, "Speech-to-Text", "스트리밍 인식")}
+  ${node("screen", 870, 114, "화면", "원문 + 번역 자막")}
+  ${pillG}`;
+  svg.classList.toggle("gloff", !st.glossary);
+}
+const dots = [];
+function spawnDot(d, dur, cls, onEnd) {
+  if (RM.matches) { if (onEnd) later(onEnd, dur); return; }
+  const path = document.createElementNS(NS, "path");
+  path.setAttribute("d", d);
+  const c = document.createElementNS(NS, "circle");
+  c.setAttribute("r", cls === "dot-a" ? 3.5 : 5);
+  c.setAttribute("class", cls);
+  const layer = svg.querySelector("#mk-dots");
+  layer.appendChild(c);
+  dots.push({ path, len: path.getTotalLength(), c, t0: performance.now(), dur, onEnd, run: st.run });
+}
+function dotsTick(now) {
+  for (let i = dots.length - 1; i >= 0; i--) {
+    const d = dots[i];
+    if (d.run !== st.run || !d.c.isConnected) { d.c.remove(); dots.splice(i, 1); continue; }
+    const k = Math.min(1, (now - d.t0) / d.dur);
+    const p = d.path.getPointAtLength(d.len * k);
+    d.c.setAttribute("cx", p.x); d.c.setAttribute("cy", p.y);
+    if (k >= 1) { d.c.remove(); dots.splice(i, 1); if (d.onEnd) d.onEnd(); }
+  }
+}
+function flash(id, ms) {
+  const el = svg.querySelector("#mk-" + id);
+  if (!el) return;
+  el.classList.add("on");
+  later(() => { const e = svg.querySelector("#mk-" + id); if (e) e.classList.remove("on"); }, ms);
+}
+function setActive(on) {
+  ["n-mic", "n-browser", "n-server", "n-stt"].forEach(id => { const e = svg.querySelector("#mk-" + id); if (e) e.classList.toggle("on", on); });
+}
+
+/* ---------- 재생 ---------- */
+let lastAudio = 0;
+function loop(now) {
+  meterTick(now);
+  if (st.running && st.speaking && !RM.matches && now - lastAudio > 160) {
+    lastAudio = now;
+    spawnDot(AUDIO_PATH, 900, "dot-a");
+  }
+  dotsTick(now);
+  requestAnimationFrame(loop);
+}
+
+const wait = ms => new Promise(r => later(r, ms));
+
+function start() {
+  if (targetList().length < 3 || st.gl.state === "updating") return;
+  st.run++;
+  st.running = true;
+  st.done = []; st.shown.clear(); st.interim = null; st.hl = null;
+  $("meter").classList.remove("idle");
+  syncControls(); renderAll();
+  play(st.run);
+}
+function stop() {
+  st.run++;
+  st.timers.forEach(clearTimeout); st.timers = [];
+  st.running = false; st.speaking = false; st.interim = null;
+  $("meter").classList.add("idle"); meterReset();
+  svg.querySelectorAll(".on").forEach(e => e.classList.remove("on"));
+  svg.querySelectorAll(".pms").forEach(e => e.textContent = "");
+  syncControls(); renderAll();
+}
+
+async function play(run) {
+  const alive = () => run === st.run;
+  while (alive()) {
+    for (let seg = 0; seg < SCRIPT.length; seg++) {
+      await speak(seg, run);
+      if (!alive()) return;
+      await wait(1700);
+      if (!alive()) return;
+    }
+    await wait(3000);
+    if (!alive()) return;
+    st.done = []; st.shown.clear(); renderAll(); // 대본 끝: 처음부터 반복
+    await wait(800);
+  }
+}
+
+async function speak(seg, run) {
+  const alive = () => run === st.run;
+  const s = SCRIPT[seg];
+  const heard = (s.heard || s.ko.replace(/\[\[|\]\]/g, "")).replace(/[.,]$/, "");
+  const words = heard.split(" ");
+  st.speaking = true;
+  if (RM.matches) setActive(true);
+  for (let i = 1; i <= words.length; i++) {
+    await wait(220 + words[i - 1].length * 45);
+    if (!alive()) return;
+    if (st.src === "ko") {
+      st.interim = { seg, text: words.slice(0, i).join(" ") };
+      renderOriginal();
+    }
+    if (i % 2 === 0 || i === words.length) {
+      if (RM.matches) flash("n-screen", 250); else spawnDot(INTERIM_PATH, 600, "dot-i");
+    }
+  }
+  await wait(450);
+  if (!alive()) return;
+  // 문장 확정
+  st.speaking = false;
+  if (RM.matches) setActive(false);
+  flash("n-stt", 600);
+  if (st.src !== "ko") return;
+  st.interim = null;
+  st.done.push(seg);
+  renderOriginal();
+  // 화면에 칸이 없는 언어도 번역은 받아 둔다(나중에 켜면 지난 문장이 보이도록).
+  const langs = [...new Set([...targetList(), ...SAMPLE_LANGS])];
+  for (const lang of langs) {
+    const ms = latency(seg, lang);
+    const total = ms * SLOW;
+    const pill = pills.find(p => p.l === lang);
+    if (pill) {
+      spawnDot(`M596 170 C630 170 640 ${pill.y} 668 ${pill.y}`, total - 250, "dot-t", () => {
+        const g = svg.querySelector("#mk-p-" + lang);
+        if (g) g.querySelector(".pms").textContent = ms + "ms";
+        flash("p-" + lang, 900);
+        spawnDot(`M802 ${pill.y} C836 ${pill.y} 840 170 870 170`, 250, "dot-t", () => flash("n-screen", 300));
+      });
+    }
+    later(() => {
+      if (!alive() || !SAMPLE_LANGS.includes(lang)) return;
+      st.shown.set(seg + ":" + lang, ms);
+      if (targetList().includes(lang)) { st.fresh.add(seg + ":" + lang); renderPanes(); }
+    }, total);
+  }
+}
+
+/* ---------- 처음 화면: 대본 앞 두 문장이 이미 나온 상태 ---------- */
+st.done = [0, 1];
+for (const seg of st.done) for (const lang of SAMPLE_LANGS) st.shown.set(seg + ":" + lang, latency(seg, lang));
+syncControls(); renderAll(); buildFlow();
+requestAnimationFrame(loop);
+})();
+</script>
