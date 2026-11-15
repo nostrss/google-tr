@@ -99,6 +99,8 @@ legend { padding: 0; margin-bottom: 6px; }
 .orig li.interim .txt::after, .tr li.interim .txt::after { content: ""; display: inline-block; width: 2px; height: 1em; background: var(--interim); margin-left: 3px; vertical-align: -2px; animation: pulse 1s infinite; }
 .tr .txt { font-size: 1.04rem; line-height: 1.5; }
 .lines li.err .txt { color: var(--live); font-size: .9rem; font-weight: 600; }
+.lines li.pending .txt { color: var(--muted); font-size: .9rem; }
+.pane header .sub.bad { color: var(--live); font-weight: 600; }
 .ms { font: .72rem var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
 mark.term { background: var(--term-bg); color: var(--term-ink); border-radius: 3px; padding: 0 2px; }
 li.new { animation: arrive .7s ease-out; }
@@ -120,7 +122,11 @@ li.new { animation: arrive .7s ease-out; }
       <label class="field" for="srcSel"><span class="label">원문 언어</span><select id="srcSel"></select></label>
       <label class="field" for="modelSel"><span class="label">인식 모델</span><select id="modelSel">
         <option value="long">long (중간 결과 자주)</option><option value="chirp_3">chirp_3 (중간 결과 드묾)</option></select></label>
+      <label class="field" for="mtSel"><span class="label">번역 모델</span><select id="mtSel">
+        <option value="nmt">NMT</option><option value="llm">Translation LLM</option><option value="adaptive">Adaptive (예문)</option></select></label>
       <label class="toggle" for="glossChk"><input type="checkbox" id="glossChk" checked><span></span>용어집 적용</label>
+      <label class="field" for="glModeSel"><span class="label">적용 방식</span><select id="glModeSel">
+        <option value="forced">강제 적용</option><option value="contextual">문맥형</option></select></label>
       <label class="toggle" for="interimChk"><input type="checkbox" id="interimChk" checked><span></span>중간 번역</label>
       <div class="spacer"></div>
       <span class="status" id="status" role="status"><i></i><span id="statusTxt">대기</span></span>
@@ -132,6 +138,8 @@ li.new { animation: arrive .7s ease-out; }
     </fieldset>
     <div class="hint" id="hint" hidden>번역할 언어를 3개 이상 고르면 시작할 수 있습니다.</div>
     <div class="glnote" id="modelNote" hidden></div>
+    <div class="glnote" id="glModeNote" hidden></div>
+    <div class="glnote" id="mtNote" hidden></div>
     <div class="hint" id="errLine" role="alert" hidden></div>
     <div class="glrow">
       <span class="label">용어집</span>
@@ -149,7 +157,7 @@ li.new { animation: arrive .7s ease-out; }
       <ul class="lines" id="origLines" aria-live="polite"></ul>
     </div>
     <div class="grid" id="trGrid"></div>
-    <p class="foot">같은 번호는 같은 문장입니다. 줄에 마우스를 올리거나 누르면 원문과 번역이 함께 강조됩니다. 회색 줄은 말하는 중의 중간 번역이고, 문장이 확정되면 확정 번역으로 바뀝니다. 줄 끝의 ms는 번역에 걸린 시간입니다. 노란 표시는 용어집으로 바뀐 용어입니다.</p>
+    <p class="foot">같은 번호는 같은 문장입니다. 줄에 마우스를 올리거나 누르면 원문과 번역이 함께 강조됩니다. 회색 줄은 말하는 중의 중간 번역이고, 문장이 확정되면 확정 번역으로 바뀝니다. 줄 끝에는 번역 모델과 번역에 걸린 시간(ms)이 붙습니다(문맥형 용어집이면 "문맥"). 노란 표시는 용어집으로 바뀐 용어입니다.</p>
   </section>
 </div>
 
@@ -165,7 +173,7 @@ const $ = (id) => document.getElementById(id);
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
 
 const st = {
-  src: "ko", targets: new Set(["en", "ja", "zh-CN"]), glossary: true, model: "long", interimTr: true,
+  src: "ko", targets: new Set(["en", "ja", "zh-CN"]), glossary: true, model: "long", interimTr: true, mt: "nmt", glMode: "forced", ds: {}, // ds = 언어별 Adaptive 데이터셋 상태
   running: false, active: [], // active = 시작할 때 고정한 대상 언어(진행 중에는 바꿀 수 없음)
   ws: null, conn: 0, startMsg: null, phase: "idle", speaking: false, interim: "",
   lines: [], order: [], tr: new Map(), fresh: new Set(), hl: null, // order = 번역 칸의 줄 순서(중간 번역 포함)
@@ -193,6 +201,17 @@ function syncControls() {
   const enough = targetList().length >= 3, updating = st.gl.state === "updating";
   $("srcSel").disabled = $("modelSel").disabled = st.running;
   $("modelNote").hidden = !(st.model === "long" && LONG_NO_HINTS.includes(st.src));
+  // 문맥형은 LLM·Adaptive만 된다(NMT는 400 오류). NMT에서는 강제 적용으로 고정해 보여 주고 사용자의 선택(st.glMode)은 남겨 둔다
+  const nmt = st.mt === "nmt";
+  $("glModeSel").disabled = !st.glossary || nmt;
+  $("glModeSel").value = nmt ? "forced" : st.glMode;
+  $("glModeNote").hidden = !st.glossary;
+  $("glModeNote").textContent = (nmt ? "NMT는 문맥형을 지원하지 않아 강제 적용으로 고정됩니다. " : "")
+    + "강제 적용: 용어가 반드시 지켜지지만 한국어에서 조사 앞 공백·조사 누락이 생길 수 있습니다. 문맥형: 문장이 자연스럽지만 용어가 지켜지지 않을 수 있습니다.";
+  $("mtNote").hidden = st.mt !== "adaptive";
+  $("mtNote").textContent = st.glossary
+    ? "Adaptive + 용어집은 예문 데이터셋 방식이라 번역이 약 2초 걸리고, 중간 번역은 자동으로 꺼집니다. 데이터셋이 없는 언어쌍은 처음 쓸 때 만듭니다(언어쌍당 몇 초)."
+    : "Adaptive(용어집 끔)는 examples.csv 예문을 요청에 직접 넣어 번역합니다.";
   $("modelNote").textContent = `long 모델은 ${NAME[st.src]} 원문에서 구문 힌트(용어집 원문 열)를 지원하지 않아 힌트 없이 인식합니다. 힌트가 필요하면 chirp_3를 고르세요.`;
   $("hint").hidden = enough || st.running;
   $("startBtn").disabled = !st.running && (!enough || updating);
@@ -210,14 +229,19 @@ function syncControls() {
 $("srcSel").addEventListener("change", (e) => { st.src = e.target.value; syncControls(); renderAll(); });
 $("targets").addEventListener("change", (e) => { e.target.checked ? st.targets.add(e.target.value) : st.targets.delete(e.target.value); syncControls(); renderPanes(); });
 $("modelSel").addEventListener("change", (e) => { st.model = e.target.value; syncControls(); });
-// 용어집·중간 번역 설정은 진행 중에도 바꿀 수 있다. 다음 번역 호출부터 반영
+// 번역 모델·용어집·중간 번역 설정은 진행 중에도 바꿀 수 있다. 다음 번역 호출부터 반영
 function sendSettings() {
-  st.glossary = $("glossChk").checked; st.interimTr = $("interimChk").checked;
-  if (st.startMsg) Object.assign(st.startMsg, { glossary: st.glossary, interim: st.interimTr }); // 재연결 때도 바뀐 값으로 시작
-  send({ type: "settings", glossary: st.glossary, interim: st.interimTr });
+  st.glossary = $("glossChk").checked; st.interimTr = $("interimChk").checked; st.mt = $("mtSel").value;
+  if (!$("glModeSel").disabled) st.glMode = $("glModeSel").value;
+  const set = { glossary: st.glossary, interim: st.interimTr, mt: st.mt, glossaryMode: st.glMode };
+  if (st.startMsg) Object.assign(st.startMsg, set); // 재연결 때도 바뀐 값으로 시작
+  send({ type: "settings", ...set });
+  syncControls(); renderPanes();
 }
 $("glossChk").addEventListener("change", sendSettings);
 $("interimChk").addEventListener("change", sendSettings);
+$("mtSel").addEventListener("change", sendSettings);
+$("glModeSel").addEventListener("change", sendSettings);
 $("startBtn").addEventListener("click", () => (st.running ? stop() : start()));
 function showError(msg) { $("errLine").textContent = msg || ""; $("errLine").hidden = !msg; }
 
@@ -276,12 +300,14 @@ function markTerms(node, text, terms) {
   }
   node.append(text.slice(last));
 }
-function row(key, label, fill, ms, cls) {
+const MT_LABEL = { nmt: "NMT", llm: "LLM", adaptive: "Adaptive" };
+const DS_LABEL = { preparing: "예문 데이터셋 준비 중…", ready: "예문 데이터셋 준비됨", failed: "예문 데이터셋 준비 실패" };
+function row(key, label, fill, ms, cls, mt) {
   const li = el("li", [cls, st.hl === key ? "hl" : ""].filter(Boolean).join(" "));
   li.dataset.key = key;
   const txt = el("span", "txt");
   fill(txt);
-  li.append(el("span", "no", label), txt, ms != null ? el("span", "ms", ms + "ms") : el("span"));
+  li.append(el("span", "no", label), txt, ms != null ? el("span", "ms", (mt ? mt + " · " : "") + ms + "ms") : el("span"));
   return li;
 }
 function renderOriginal() {
@@ -298,15 +324,16 @@ function renderPanes() {
   if (!langs.length) return grid.replaceChildren(el("p", "empty", "번역할 언어를 고르세요."));
   grid.replaceChildren(...langs.map((lang) => {
     const pane = el("div", "pane tr"), head = el("header"), ul = el("ul", "lines");
-    head.append(el("h3", null, NAME[lang]), el("span", "sub", "번역"));
+    const ds = st.running && st.mt === "adaptive" && st.glossary && st.ds[lang];
+    head.append(el("h3", null, NAME[lang]), el("span", "sub" + (ds && ds.state === "failed" ? " bad" : ""), ds ? DS_LABEL[ds.state] : "번역"));
     ul.lang = lang;
     const items = [];
     for (const l of st.order) {
       const t = st.tr.get(l.key + ":" + lang);
       if (!t) continue;
       const cls = [st.fresh.has(l.key + ":" + lang) ? "new" : "", t.interim ? "interim" : ""].filter(Boolean).join(" ");
-      items.push(t.error ? row(l.key, l.label, (n) => (n.textContent = t.error), null, "err " + cls)
-        : row(l.key, l.label, (n) => markTerms(n, t.text, t.terms), t.ms, cls));
+      items.push(t.error ? row(l.key, l.label, (n) => (n.textContent = t.error), null, (t.pending ? "pending " : "err ") + cls)
+        : row(l.key, l.label, (n) => markTerms(n, t.text, t.terms), t.ms, cls, MT_LABEL[t.mt] + (t.contextual ? " 문맥" : "")));
     }
     if (!items.length) items.push(el("li", "empty", "번역을 기다리는 중입니다."));
     ul.replaceChildren(...items);
@@ -401,6 +428,7 @@ function onMessage(m, conn) {
   // 서버의 id는 연결마다 1부터 다시 시작하므로 연결 번호와 함께 줄을 구분한다
   const key = conn + "-" + m.id, label = conn > 1 ? key : String(m.id);
   if (m.type === "started") { st.phase = "ready"; showError(""); syncControls(); }
+  else if (m.type === "dataset") { st.ds[m.lang] = m; if (m.state === "failed") showError(`${NAME[m.lang]} 예문 데이터셋 준비 실패: ${m.error}`); renderPanes(); }
   else if (m.type === "vad") { st.speaking = m.speaking; renderOriginal(); syncControls(); }
   else if (m.type === "interim") { st.interim = m.text; st.interimKey = key; renderOriginal(); }
   else if (m.type === "final") {
@@ -412,7 +440,7 @@ function onMessage(m, conn) {
   } else if (m.type === "translation" || (m.type === "error" && m.lang && m.id)) {
     const k = key + ":" + m.lang, prev = st.tr.get(k);
     if (m.interim && prev && !prev.interim) return; // 확정 번역은 늦게 온 중간 번역으로 덮지 않는다(서버도 버리지만 한 번 더)
-    st.tr.set(k, m.type === "error" ? { error: "번역 실패: " + m.message } : m);
+    st.tr.set(k, m.type === "error" ? { error: m.pending ? m.message : "번역 실패: " + m.message, pending: m.pending } : m);
     if (!m.interim) st.fresh.add(k); // 중간 번역은 자주 바뀌므로 도착 효과를 주지 않는다
     addOrder(key, label);
     renderPanes();
@@ -430,8 +458,8 @@ function addOrder(key, label) {
 async function start() {
   if (targetList().length < 3 || st.gl.state === "updating") return;
   st.running = true; st.active = targetList(); st.phase = "connecting";
-  st.lines = []; st.order = []; st.tr.clear(); st.interim = ""; st.speaking = false; st.hl = null;
-  st.startMsg = { type: "start", source: st.src, targets: st.active, glossary: st.glossary, interim: st.interimTr, model: st.model };
+  st.lines = []; st.order = []; st.tr.clear(); st.interim = ""; st.speaking = false; st.hl = null; st.ds = {};
+  st.startMsg = { type: "start", source: st.src, targets: st.active, glossary: st.glossary, interim: st.interimTr, model: st.model, mt: st.mt, glossaryMode: st.glMode };
   showError(""); syncControls(); renderAll();
   try { await startMic(); }
   catch (e) { stop(); return showError("마이크를 쓸 수 없습니다: " + e.message); }

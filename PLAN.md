@@ -1,8 +1,12 @@
 # 실시간 다국어 자막 프로토타입 기획서 (NMT 전용)
 
-작성일: 2026-11-14. 번역 방식 3종(NMT / Translation LLM / Adaptive)을 다루던 이전 기획서는 `PLAN-3modes.md`에 그대로 보존했다. 이 문서는 범위를 **Google NMT 번역만**으로 줄인 것이다. 문서 확인 결과는 각 항목 옆에 출처 URL을 달았고, 문서로 확인하지 못한 내용은 **미확인**으로 표기했다.
+작성일: 2026-11-14. 번역 방식 3종(NMT / Translation LLM / Adaptive)을 다루던 이전 기획서는 `PLAN-3modes.md`에 그대로 보존했다. 이 문서는 범위를 **Google NMT 번역만**으로 줄인 것이다(2026-11-15에 Translation LLM과 Adaptive Translation을 화면의 번역 모델 선택으로 다시 넣었다, 4.3절). 문서 확인 결과는 각 항목 옆에 출처 URL을 달았고, 문서로 확인하지 못한 내용은 **미확인**으로 표기했다.
 
 2026-11-15: 웹 화면에서 용어집 CSV를 올려 교체하는 기능을 추가했다(5.2절).
+
+2026-11-15(추가 2): 화면에 "번역 모델" 선택(NMT / Translation LLM / Adaptive)을 추가했다. 미확인 사항은 관문 C(실제 호출)로 확인했다(4.3절, `scripts/check-mt.mjs`).
+
+2026-11-15(추가 3): 화면에 "용어집 적용 방식"(강제 적용 기본 / 문맥형)을 추가하고, Adaptive + 용어집을 예문 데이터셋 방식으로 바꿨다(2·3·4.2·4.3·4.4절). 시험 결과는 4.4절에 있다.
 
 2026-11-15(추가): 말하는 도중의 중간(interim) 번역과 화면의 인식 모델 선택(`long`/`chirp_3`, 기본 `long`)을 추가했다(2·3·4.1·4.2·10절).
 
@@ -28,6 +32,8 @@
 
 **하는 것**
 - 마이크 입력 → STT 스트리밍(인식 모델 `long` 또는 `chirp_3`, 화면에서 선택) → 원문 자막(interim과 final). chirp_3의 interim은 오디오 약 5초마다 1번뿐이라(4.1절) chirp_3에서는 발화 중에 주로 "듣는 중…" 표시(VAD 이벤트)가 보인다
+- 번역 모델 선택: NMT(기본) / Translation LLM / Adaptive Translation(용어집 끔: 인라인 예문, 용어집 켬: 예문 데이터셋). 진행 중에도 바꿀 수 있고 다음 번역 호출부터 적용한다(4.3절)
+- 용어집 적용 방식 선택: 강제 적용(기본) / 문맥형(LLM·Adaptive만). 진행 중에도 바꿀 수 있다(4.2·4.3절)
 - 중간 번역: 말하는 도중의 interim 원문도 대상 언어별로 번역해 회색 줄로 보여 주고, final 번역이 오면 확정 줄로 바꾼다(켜기/끄기 가능, 4.2절)
 - final 문장마다 대상 언어별로 NMT 번역을 병렬 호출 → 언어별 번역 자막
 - glossary on/off, glossary로 바뀐 용어 강조, STT 구문 힌트(같은 용어 목록)
@@ -35,7 +41,7 @@
 - 언어 10종(en, zh-CN, es, hi, pt, ru, ja, ko, fr, de) 중 원문 1개와 대상 3개 이상 선택
 - Google Cloud Run에 손으로 소스 배포(`gcloud run deploy --source .`) 1회, 테스트가 끝나면 서비스 삭제(8절)
 
-**안 하는 것**: Translation LLM, Adaptive Translation, 번역 방식 전환(11절 참고), 청중 배포(다중 화면), 로그인, 자막 저장, 확장성(다중 인스턴스, 로드밸런서), 배포 자동화(CI/CD), 커스텀 도메인, 화자 분리, 원문 언어 자동 감지, 모바일 대응. (interim 번역은 2026-11-15에 범위에 넣었다. 아래 '하는 것' 참고)
+**안 하는 것**: 예문 화면 업로드, `examples.csv`가 바뀌었을 때 Adaptive 데이터셋 갱신(지우고 서버를 다시 띄우면 새로 만든다), 번역 결과 후처리(조사 앞 공백 보정 등, 결정되지 않음), 청중 배포(다중 화면), 로그인, 자막 저장, 확장성(다중 인스턴스, 로드밸런서), 배포 자동화(CI/CD), 커스텀 도메인, 화자 분리, 원문 언어 자동 감지, 모바일 대응. (interim 번역은 2026-11-15에 범위에 넣었다. 아래 '하는 것' 참고)
 
 ---
 
@@ -57,6 +63,9 @@
 ```
 
 - 원문 언어: `<select>` 1개. 대상 언어: 체크박스 10개(원문 언어는 비활성화). 3개 미만이면 [시작] 비활성화.
+- 번역 모델: 인식 모델 옆에 `<select>` 1개(NMT 기본 / Translation LLM / Adaptive (예문)). 인식 모델과 다른 단계라 따로 둔다. 진행 중에도 바꿀 수 있고 다음 번역 호출부터 반영한다(`settings`의 `mt`). 각 번역 줄 끝에 `LLM · 620ms`처럼 모델과 시간을 작게 표시해 비교할 수 있다. Adaptive를 고르면 한 줄 안내가 나온다. 용어집 켬: "Adaptive + 용어집은 예문 데이터셋 방식이라 번역이 약 2초 걸리고, 중간 번역은 자동으로 꺼집니다. 데이터셋이 없는 언어쌍은 처음 쓸 때 만듭니다(언어쌍당 몇 초)." 용어집 끔: "Adaptive(용어집 끔)는 examples.csv 예문을 요청에 직접 넣어 번역합니다." 예문이 없는 언어 칸에는 오류 한 줄이 나온다.
+- 용어집 적용 방식: 용어집 체크박스 옆에 `<select>` 1개(강제 적용 기본 / 문맥형). 진행 중에도 바꿀 수 있고 다음 번역 호출부터 반영한다(`settings`의 `glossaryMode`). 용어집 체크박스가 꺼져 있으면 비활성. NMT를 고르면 "강제 적용"으로 고정·비활성되고(사용자가 고른 값은 기억해 두었다가 LLM·Adaptive로 돌아가면 되살린다) 안내 줄 앞에 "NMT는 문맥형을 지원하지 않아 강제 적용으로 고정됩니다."가 붙는다. 용어집이 켜져 있으면 그 아래에 설명 한 줄: "강제 적용: 용어가 반드시 지켜지지만 한국어에서 조사 앞 공백·조사 누락이 생길 수 있습니다. 문맥형: 문장이 자연스럽지만 용어가 지켜지지 않을 수 있습니다." 문맥형으로 번역한 줄은 끝 표시가 `LLM 문맥 · 358ms`처럼 된다.
+- Adaptive + 용어집으로 진행 중이면 각 번역 칸 머리의 작은 글씨가 `번역` 대신 데이터셋 상태(`예문 데이터셋 준비 중…` / `예문 데이터셋 준비됨` / 빨간 `예문 데이터셋 준비 실패`)가 된다. 준비 중에 확정된 문장은 그 칸에 회색으로 `예문 데이터셋 준비 중…`이 나오고 다시 번역하지 않는다(준비가 끝난 뒤 다음 문장부터 번역). 실패하면 설정 영역 오류 줄에도 한 줄 나온다.
 - 인식 모델: `<select>` 1개(`long` 중간 결과 자주 / `chirp_3` 중간 결과 드묾), 기본 `long`. 정지 상태에서만 바꿀 수 있고 `start`에 실어 보낸다. `long`은 한국어·중국어 간체·힌디어·러시아어 원문에서 구문 힌트를 거부하므로(4.1절) 그 언어를 고르면 설정 아래에 "long 모델은 ○○ 원문에서 구문 힌트(용어집 원문 열)를 지원하지 않아 힌트 없이 인식합니다. 힌트가 필요하면 chirp_3를 고르세요."를 한 줄로 보여 준다.
 - 중간 번역 체크박스: 기본 켬, 진행 중에도 바꿀 수 있다(다음 번역 호출부터). 번역 호출 수와 문자 수가 몇 배로 늘어나므로(10절) 끌 수 있게 둔다. 켜져 있으면 번역 칸에 진행 중 발화의 번역이 회색(원문 interim과 같은 표시)으로 나오고 갱신될 때마다 덮어쓰며, 확정 번역이 오면 일반 줄로 바뀐다.
 - 원문 영역: 확정 문장 아래에 진행 중 줄을 하나 둔다. interim이 오면 그 텍스트를 회색으로, interim 없이 서버가 `vad`(발화 시작)를 보내면 "듣는 중…"을 회색으로 표시한다. final이 오거나 발화 끝 이벤트가 오면 지운다. 상태 표시도 발화 중에는 "듣는 중"이 된다. chirp_3는 짧은 발화에서 interim이 전혀 없으므로(4.1절) 이 표시가 "인식 중"을 알리는 주된 수단이다.
@@ -109,21 +118,22 @@
 
 | 형식 | 내용 |
 |---|---|
-| 텍스트 `{"type":"start","source":"ko","targets":["en","ja","zh-CN"],"glossary":true,"interim":true,"model":"long"}` | 세션 시작. 서버가 STT 스트림을 연다. `model`은 허용 목록(`long`, `chirp_3`) 밖이면 `long`, `interim`은 중간 번역 여부 |
+| 텍스트 `{"type":"start","source":"ko","targets":["en","ja","zh-CN"],"glossary":true,"interim":true,"model":"long","mt":"nmt","glossaryMode":"forced"}` | 세션 시작. 서버가 STT 스트림을 연다. `model`은 허용 목록(`long`, `chirp_3`) 밖이면 `long`, `mt`는 허용 목록(`nmt`, `llm`, `adaptive`) 밖이면 `nmt`, `glossaryMode`는 허용 목록(`forced`, `contextual`) 밖이면 `forced`(NMT는 값과 관계없이 forced), `interim`은 중간 번역 여부. Adaptive + 용어집이면 대상 언어마다 예문 데이터셋 준비를 시작한다 |
 | 바이너리 | LINEAR16 16kHz mono PCM 100ms 조각 |
-| 텍스트 `{"type":"settings","glossary":false,"interim":true}` | glossary·중간 번역 설정 변경(다음 번역 호출부터) |
+| 텍스트 `{"type":"settings","glossary":false,"interim":true,"mt":"llm","glossaryMode":"contextual"}` | glossary·중간 번역·번역 모델·용어집 적용 방식 변경(다음 번역 호출부터). 바뀐 결과가 Adaptive + 용어집이면 데이터셋 준비를 시작한다 |
 | 텍스트 `{"type":"stop"}` | STT 스트림 종료 |
 
 서버 → 브라우저
 
 | 형식 | 내용 |
 |---|---|
-| `{"type":"started","model":"long","phrases":9}` | STT 스트림을 열었다(구현에서 추가). 브라우저는 이 메시지를 받은 뒤부터 오디오를 보낸다. `phrases`는 구문 힌트 수(힌트를 못 쓰는 조합이면 0) |
+| `{"type":"started","model":"long","mt":"nmt","phrases":9}` | STT 스트림을 열었다(구현에서 추가). 브라우저는 이 메시지를 받은 뒤부터 오디오를 보낸다. `phrases`는 구문 힌트 수(힌트를 못 쓰는 조합이면 0) |
 | `{"type":"vad","speaking":true}` | 발화 시작/끝(`SPEECH_ACTIVITY_BEGIN`/`END`, 구현에서 추가). "듣는 중…" 표시용 |
 | `{"type":"interim","id":13,"text":"..."}` | 진행 중 원문(덮어쓰기). `id`는 이 발화가 확정되면 받을 final 번호와 같다(중간 번역을 같은 줄에 붙이기 위해 추가) |
 | `{"type":"final","id":12,"text":"..."}` | 확정 원문 |
-| `{"type":"translation","id":12,"lang":"en","text":"...","ms":640,"terms":["Vertex AI"]}` | 번역 결과(언어별로 따로 도착). `terms`는 glossary로 바뀐 용어 목록(없으면 빈 배열). 중간 번역이면 `"interim":true`가 붙는다(확정 번역에는 없음) |
-| `{"type":"error","id":12,"lang":"en","message":"..."}` | 언어별 오류. `id`나 `lang`이 없으면 세션 전체 오류 |
+| `{"type":"translation","id":12,"lang":"en","mt":"nmt","text":"...","ms":640,"terms":["Vertex AI"]}` | 번역 결과(언어별로 따로 도착). `mt`는 이 번역에 쓴 번역 모델. `terms`는 glossary로 바뀐 용어 목록(없으면 빈 배열). 문맥형 용어집으로 번역했으면 `"contextual":true`, 중간 번역이면 `"interim":true`가 붙는다(아니면 없음) |
+| `{"type":"error","id":12,"lang":"en","message":"..."}` | 언어별 오류. `id`나 `lang`이 없으면 세션 전체 오류. 데이터셋 준비 중이라 번역하지 않은 경우는 `"pending":true`가 붙고 `message`는 `예문 데이터셋 준비 중…`(화면은 오류가 아닌 회색 줄로 표시) |
+| `{"type":"dataset","lang":"ja","state":"preparing"}` | Adaptive 예문 데이터셋 상태(구현에서 추가). `state`는 `preparing` / `ready`(`ms` = 준비에 걸린 시간) / `failed`(`error`) |
 
 `id`는 발화(final 문장) 번호다. 번역이 늦게 도착해도 같은 줄에 붙일 수 있다. 서버는 STT 스트림마다 진행 중 발화에 번호를 하나 붙이고(첫 interim이나 final 때) final이 오면 닫는다. 그래서 4분 30초 교체 때 이전 스트림의 마지막 final과 새 스트림의 interim이 겹쳐도 번호가 섞이지 않는다(번호가 도착 순서와 다를 수는 있다). 교체돼 입력을 닫은 스트림의 interim은 버린다. `settings`로 glossary를 바꾸면 그 뒤에 나오는 final부터 반영한다. `stop` 뒤에도 이전 스트림이 남은 final을 내면 서버는 그것을 보내고 번역한다(브라우저는 정지 후 3초 동안 연결을 열어 두어 받는다).
 
@@ -222,6 +232,7 @@
 }
 ```
 - glossary가 꺼져 있으면 `glossaryConfig`를 빼고 보낸다.
+- **용어집 적용 방식**(2026-11-15 추가 3): 강제 적용(기본) = `glossaryConfig`에 `contextualTranslationEnabled`를 넣지 않는다. 문맥형 = `contextualTranslationEnabled: true`. 확인됨(2026-11-15 실행): **NMT에 문맥형을 주면 `3 INVALID_ARGUMENT: Contextual translation is only supported for LLM models.`로 실패한다**(조용히 무시되지 않음). 그래서 서버는 NMT에서 이 값을 무시하고 화면도 강제 적용으로 고정한다.
 - 응답의 `translations`는 glossary를 적용하기 **전** 번역이고, `glossaryTranslations`는 적용한 번역이다. glossary가 켜져 있으면 `glossaryTranslations[0].translatedText`를 표시한다.
 - 모델 경로 `.../models/general/nmt`는 REST 레퍼런스에서 확인했다. `model`을 빼면 기본값이 NMT다("If not provided, the default Google model (NMT) will be used"). 확인됨(2026-11-15 실행): `model` 경로가 받아들여지고, 빼도 동작한다.
 - glossary 경로에는 프로젝트 ID(`gtr-923548`)와 번호(`650337581319`) 모두 쓸 수 있다(확인됨). API가 돌려주는 `name`은 번호 형식이다. 구현은 프로젝트 ID를 쓴다.
@@ -257,6 +268,110 @@
 3. 브라우저는 번역 텍스트에서 `terms`의 각 용어를 `<mark>`로 감싼다(텍스트는 `textContent`로 넣고 용어 위치만 나눠 감싼다. `innerHTML`에 번역 결과를 그대로 넣지 않는다).
 
 한계: 모든 열이 같은 고유명사(예: "Vertex AI")는 glossary 없이도 같은 문자열로 번역되면 강조되지 않는다. 번역 전후가 실제로 달라진 용어만 강조하는 것이 목적이므로 이 동작을 그대로 둔다. 확인됨: en→ko "Poteto is the creator of pstack."에서 `terms`는 `["Poteto"]`이고 `pstack`은 양쪽에 다 있어 강조되지 않는다. ja는 off일 때도 `Potetoは…`라 강조되지 않는다.
+
+### 4.3 Translation LLM과 Adaptive Translation (2026-11-15 추가, 관문 C 실행 결과)
+
+이전 기획서 `PLAN-3modes.md` 4.4~4.6절의 미확인 사항을 실제 호출로 확인했다(`scripts/check-mt.mjs compare | pairs | latency | adaptive | burst`). 서버는 번역 호출부를 `machineTranslate(mt, …)` 함수 하나로 두고 `mt` 값으로 분기한다.
+
+**Translation LLM** (`translateText`, `model: projects/P/locations/us-central1/models/general/translation-llm`)
+- 확인됨: `us-central1`에서 모델 경로가 받아들여진다. 대표 언어쌍 zh-CN→de, hi→ru, es→fr, pt→ja, ru→ko, de→hi와 en↔ko, ko→ja가 모두 됐다.
+- contextual glossary: Node 클라이언트의 필드 이름은 `glossaryConfig.contextualTranslationEnabled`(camelCase)이고 받아들여진다. 켜면 응답의 **`translations[0].translatedText`가 빈 문자열**로 오고 `glossaryTranslations`에만 번역이 든다(문서의 "glossaryTranslations만 온다"와 거의 같음, 필드는 오지만 비어 있음).
+- 서버는 glossary가 켜져 있으면 TLLM에서 **화면의 용어집 적용 방식에 따라** contextual을 켜거나 끈다(2026-11-15 추가 3. 이전에는 항상 켰고, 지금 기본은 강제 적용이라 꺼진다). 꺼져 있으면 `glossaryConfig`를 넣지 않는다.
+- **한국어 조사 문제가 contextual에서 사라진다** (en→ko):
+
+| 원문 | NMT off | NMT glossary | TLLM off | TLLM glossary(contextual 끔) | TLLM contextual |
+|---|---|---|---|---|---|
+| Poteto is the creator of pstack. | 포테토는 pstack의 창시자입니다. | Poteto 는 pstack 의 창시자입니다. | Poteto는 pstack의 제작자입니다. | Poteto 는 pstack 의 제작자입니다. | Poteto는 pstack의 제작자입니다. |
+| The context window of this model is large. | 이 모델의 컨텍스트 창은 넓습니다. | 이 모델의 컨텍스트 윈도우 넓습니다. | 이 모델의 컨텍스트 윈도우는 큽니다. | 이 모델의 컨텍스트 윈도우 큽니다. | 이 모델의 컨텍스트 윈도우는 큽니다. |
+| 컨텍스트 윈도우를 늘렸습니다.(ko→en) | I increased the context window. | (같음) | We have expanded the context window. | The context window has been expanded. | We have expanded the context window. |
+
+  contextual이 아닌 TLLM glossary는 NMT와 같은 공백·조사 누락이 생긴다(glossary 치환이 같은 방식으로 보임, 추정). TLLM은 glossary 없이도 `Poteto`를 그대로 두고 `컨텍스트 윈도우`를 썼다.
+- 지연(en→ko 짧은 문장 10회, 로컬): NMT 중앙값 143ms(첫 호출 694ms), TLLM off 중앙값 461ms·최대 495ms, TLLM contextual 중앙값 802ms·최대 895ms. 이 정도 호출 수에서는 분당 한도에 걸리지 않았다.
+
+**Adaptive Translation** (`adaptiveMtTranslate`, 인라인 예문: 용어집을 끈 Adaptive에서 쓴다)
+- 확인됨: **dataset 없이 `referenceSentenceConfig`(예문 5쌍)만으로 호출된다.** REST 레퍼런스는 `dataset`을 Required로 적었지만 실제로는 필요 없다. 영어를 끼지 않은 ko→ja도 된다. 응답은 `translations[0].translatedText`.
+- **`glossaryConfig`를 함께 주면 실패한다**: `13 INTERNAL: Persistent dataset is null.`(contextual 켜도 같음). 인라인 예문과는 함께 쓸 수 없다. 그래서 용어집을 켠 Adaptive는 아래 데이터셋 방식으로 호출한다(2026-11-15 추가 3).
+- 호출 빈도: 대상 3개를 병렬로 대기 없이 10라운드(30건, 5.4초, 약 5.5건/초) 호출해 오류 0, 중앙값 465ms·최대 1,098ms. 중간 번역을 켠 20초 연속 발화(약 4건/초, 87건)에서도 429가 없었다. 문서의 "one QPS per project"는 이 수준에서는 적용되지 않았다(분당 900 한도에 가까운 것으로 추정). 그래서 확정·중간 번역 모두 병렬 그대로 쓰고 중간 번역도 끄지 않는다(인라인 예문 방식 기준. 데이터셋 방식은 중간 번역을 끈다).
+- 예문: 저장소 루트 `examples.csv`(glossary와 같은 10개 언어 헤더, 최대 5행)를 서버 시작 때 읽고, 원문 열과 대상 열이 모두 있는 행으로 예문 쌍을 만든다. 검사는 용어집과 같은 `parseGlossaryCsv`를 써서 **칸 안에 ASCII 쉼표와 따옴표를 쓸 수 없다**(문장에 쉼표가 필요하면 빼고 쓴다, `、`·`，`는 됨). 파일이 없거나 형식이 틀리거나 해당 언어 칸이 비면 그 언어 칸에 오류 한 줄이 나온다(예: `examples.csv에 en·hi 열 예문이 없습니다`). 현재 `examples.csv`는 개발자 인터뷰 문체의 **시험용 초안**이고 hi 열은 비어 있다. 화면 업로드는 없다.
+- 결과가 TLLM과 같은 경우가 많았다(예: 중간 번역 `저희가 문을 열겠습니다.`가 두 모델에서 같음). Adaptive도 같은 LLM 위에서 동작하는 것으로 보인다(추정).
+
+**Adaptive dataset 방식 + glossary** (확인됨(2026-11-15 실행), `scripts/check-adaptive-dataset.mjs`)
+- dataset 생성: `createAdaptiveMtDataset`(이름 `check-en-ko`처럼 하이픈 허용, `sourceLanguageCode`·`targetLanguageCode` 지정) 약 1.4초. `importAdaptiveMtFile`은 TSV(`원문\t대상` 한 줄 1쌍)를 **요청에 직접 싣는 `fileInputSource`**(mimeType `text/tab-separated-values`)와 버킷 `gcsInputSource` 둘 다 됐다. 걸린 시간: 인라인 2.0~2.2초(한 번 10초), 버킷 12초. 가져온 직후 바로 번역된다. 문서: 최소 5쌍, API 최대 30,000쌍, 한 쌍 512자 이하. 이미 5쌍이 있는 dataset에 3행짜리 파일 추가도 됐다.
+- 다시 import하면 **누적**이다(파일 이름이 같아도 새 파일로 추가, `exampleCount` 5→8). 교체하려면 `deleteAdaptiveMtFile`로 옛 파일을 지워야 한다(삭제는 시험하지 않음).
+- **dataset + `glossaryConfig`는 된다.** 10개 언어 equivalent term set `conf-terms`가 en→ko·ko→en·ko→ja dataset 모두에서 오류 없이 적용됐다. 프로젝트 번호 경로도 된다. REST 직접 호출에서 `ignoreCase`/`ignore_case`, `contextual_translation_enabled` 모두 받아들여진다.
+- 응답: glossary 켬(contextual 끔)이면 `translations`와 `glossaryTranslations`가 함께 온다. 다만 `translations`도 이미 공백이 들어간 형태라 깨끗한 적용 전 번역이 아니다(예: `poteto 는 pstack 의`). contextual이면 `translations`는 **빈 배열**(REST에서는 필드 자체가 없음), `glossaryTranslations`만 온다.
+- dataset과 `referenceSentenceConfig`는 함께 줄 수 없다: `3 INVALID_ARGUMENT: Dataset must be unset if reference_sentence_config is set.` 인라인 예문 + glossary는 여전히 `13 INTERNAL: Persistent dataset is null.`
+- **결과 (en→ko, dataset `check-en-ko`)**:
+
+| 원문 | glossary 끔 | glossary 켬 (`glossaryTranslations`) | contextual |
+|---|---|---|---|
+| Poteto is the creator of pstack. | Poteto는 pstack의 제작자입니다. | Poteto 는 pstack 의 제작자입니다. | Poteto는 pstack의 제작자입니다. |
+| poteto is the creator of pstack. | poteto는 pstack의 제작자입니다. | Poteto 는 pstack 의 제작자입니다. | poteto는 pstack의 제작자입니다.(5회 모두) |
+| The context window of this model is large. | 이 모델의 컨텍스트 윈도우는 큽니다. | 이 모델의 컨텍스트 윈도우 큽니다. | 이 모델의 컨텍스트 윈도우는 큽니다. |
+| Matt Pocock and Lauren Tan work at SpaceX. | 맷 포콕과 로렌 탄은 스페이스X에서 일합니다. | Matt Pocock 과 Lauren Tan SpaceX 에서 일합니다. | 맷 포콕과 로렌 탄은 스페이스X에서 일합니다. |
+| I met poteto and matt at spacex yesterday. | 어제 스페이스X에서 포테이토와 맷을 만났습니다. | 어제 SpaceX 에서 Poteto 와 Matt 만났습니다. | 어제 스페이스X에서 포테이토와 맷을 만났습니다. |
+
+  - **contextual은 용어를 강제하지 않는다**: 시험한 모든 문장에서 glossary 끔과 같은 결과였다. glossary 켬(contextual 끔)만 용어를 강제하고, NMT와 같은 조사 앞 공백·조사 누락이 생긴다.
+  - 같은 문장을 **TLLM contextual**로 보내도 `맷 포콕과 로렌 탄은 스페이스X에서…`, `포테이토와 맷을…`, `poteto는…`이었다. 위 TLLM 절의 "contextual에서 조사 문제가 사라진다"는 용어가 적용된 결과가 아니라 **용어가 적용되지 않은 결과**로 보아야 한다(앞의 TLLM 표는 원래 `Poteto`, `컨텍스트 윈도우`로 번역되던 문장이라 구분되지 않았다).
+- 언어쌍: 요청에는 언어 코드 필드가 없고 **대상 언어는 dataset이 정한다.** en→ko dataset에 한국어 원문을 넣으면 그대로 돌아오고, 일본어 원문은 한국어로 번역됐다. 그래서 대상 언어마다 dataset이 필요하다. 영어를 끼지 않은 ko→ja dataset도 만들어졌다.
+- 지연(en→ko 짧은 문장 10회, 로컬, 두 번 측정): glossary 켬 중앙값 약 2.0초(최대 2.1~2.7초), contextual 약 1.9~2.0초, glossary 끔 약 2.3초. 같은 시각 인라인 예문 방식은 중앙값 513ms. 3개 병렬 10라운드(30건, 20.6초, 약 1.5건/초) 오류 0, 429 없음. **0.7초 간격 중간 번역에는 쓸 수 없고, 확정 번역도 약 2초 늦어진다.**
+- 관리: `listAdaptiveMtDatasets`, `listAdaptiveMtFiles`로 목록을 본다. 프로젝트당 dataset 수 상한은 문서에 없다. IAM: `roles/cloudtranslate.editor`에 `adaptiveMtDatasets.create/import/list/delete/predict`가 모두 있다(문서), `roles/cloudtranslate.user`는 get·list·predict만(create·import·delete 없음).
+- 시험 리소스 `check-en-ko`·`check-ko-en`·`check-ko-ja`와 버킷 객체 `adaptive-check-ko-en.tsv`는 구현 확인 뒤 지웠다. 확인됨: `deleteAdaptiveMtDataset`은 파일이 든 데이터셋도 바로 지운다(각 약 0.95초, `check-adaptive-dataset.mjs delete`).
+- 출처: https://docs.cloud.google.com/translate/docs/advanced/adaptive-translation , https://docs.cloud.google.com/translate/docs/advanced/glossary , https://docs.cloud.google.com/translate/docs/reference/rest/v3/projects.locations.adaptiveMtDatasets/importAdaptiveMtFile , https://docs.cloud.google.com/translate/quotas , https://docs.cloud.google.com/translate/docs/access-control
+
+**용어 강조의 변화**: 강조는 "glossary 적용 번역에는 있고 적용 전 번역에는 없는 대상 언어 용어"다. 문맥형은 적용 전 번역이 빈 문자열(Adaptive는 빈 배열)이라, 결과에 들어 있는 대상 언어 용어가 **모두** 강조된다(예: ko→en `context window`, 모델이 원래도 그렇게 번역했을 용어). 문맥형은 용어를 강제하지 않으므로 강조는 "용어집으로 바뀐 용어"가 아니라 "결과에 든 용어"다. 강제 적용은 NMT·TLLM·Adaptive 모두 같은 비교를 쓴다. TLLM 강제 적용의 `translations`는 깨끗한 적용 전 번역이다(`어제 스페이스X에서 포테이토와 맷을 만났습니다.`). Adaptive 강제 적용의 `translations`는 조사 앞 공백이 들어간 형태(`맷 포콕 과 로렌 탄은 스페이스X 에서`)지만 용어 포함 여부만 비교하므로 그대로 쓴다. 실제 결과에서 엉뚱한 강조는 없었다(아래 표). 용어집을 끈 Adaptive(인라인)는 강조하지 않는다.
+
+**중간 번역과 함께** (`check-ws.mjs`, long 모델, 대상 ko/ja/es, 합성 음성)
+
+| 번역 모델 | 첫 중간 번역(오디오 시작 기준) | 갱신 간격 평균 | 중간 번역 1회 평균 | 20초 연속 발화 언어당 중간 번역 수 |
+|---|---|---|---|---|
+| NMT glossary on | 약 1.2초 | 0.69초 | 약 180~260ms | 29 |
+| NMT glossary off | 약 0.75~1.4초 | 0.70초 | 약 165ms | 28~29 |
+| TLLM glossary on(contextual, 지금은 "문맥형"일 때) | 약 2.0초 | 0.73~0.79초 | 약 600~690ms | 24~26 |
+| TLLM glossary off | 약 1.5초 | 0.71초 | 약 490~510ms | 27 |
+| Adaptive(인라인, 용어집 끔) | 약 1.0~1.1초 | 0.71~0.72초 | 약 460~530ms | 28 |
+
+호출 최소 간격(700ms)이 TLLM·Adaptive 지연과 비슷해 갱신 간격은 크게 벌어지지 않았다. 쉼 있는 3문장(10초)에서는 TLLM 1.06~1.22초, Adaptive 0.96~1.09초 간격이었다. 확정 번역 지연은 TLLM 약 450~875ms, Adaptive 약 340~480ms였다. 진행 중 `settings`로 모델을 바꾸면 다음 호출부터 바뀐다(확인됨: nmt로 시작해 첫 final 뒤 llm으로 바꾸면 그 뒤 중간·확정 번역이 모두 llm).
+
+### 4.4 용어집 적용 방식과 Adaptive 데이터셋 (구현, 2026-11-15 추가 3)
+
+**Adaptive 데이터셋 준비 (서버)**
+- 이름 규칙: 언어쌍마다 1개, `projects/P/locations/us-central1/adaptiveMtDatasets/ex-<원문>-<대상>`(소문자, 예: `ex-en-ko`, `ex-zh-cn-ko`). 시험용 `check-*`와 구분한다.
+- 시점: `start`에서 Adaptive + 용어집이면, 또는 진행 중 `settings`로 그 조합이 되면 대상 언어마다 준비한다. 준비를 기다리지 않고 바로 시작한다.
+- 순서: `examples.csv`에서 원문·대상 열이 모두 있는 행을 고른다(5쌍 미만이면 실패: `examples.csv에 en·hi 예문이 0쌍입니다(데이터셋에는 5쌍 필요)`) → `getAdaptiveMtDataset`(없으면 `createAdaptiveMtDataset`) → `exampleCount`가 0이면 `importAdaptiveMtFile`(`fileInputSource`, TSV를 요청에 직접 싣는다, 버킷을 쓰지 않음).
+- 상태는 서버 메모리의 언어쌍별 표에 두고 모든 세션이 같이 쓴다. 실패하면 다음 `start`/`settings` 때 다시 시도한다. `examples.csv`가 바뀌어도 기존 데이터셋은 갱신하지 않는다(코드에 `ponytail:` 주석). 바꾸려면 데이터셋을 지우고 **서버를 다시 띄운다**(준비 상태를 메모리에 두므로 서버를 그대로 두면 지운 데이터셋을 계속 준비됨으로 보고 번역이 실패한다).
+- 준비 중인 칸의 확정 번역은 `pending` 오류로 보내고 다시 번역하지 않는다. 가장 단순한 방식이다.
+- **확인됨(2026-11-15 실행, 로컬)**: 처음 시작(데이터셋 없음) en→ko 3.1초, en→ja 11.1초, en→es 11.2초. 그동안 확정된 문장은 ja·es 칸에 `예문 데이터셋 준비 중…`, 준비 후 다음 문장부터 번역됐다. 같은 서버로 두 번째 시작은 즉시 `ready`(메모리). 서버를 다시 띄운 뒤 시작은 `getAdaptiveMtDataset`만 해서 약 0.3초. 진행 중 NMT → Adaptive(용어집 켬) 전환: 이미 있는 ko·ja는 즉시 ready, 새 en→fr은 2.5초 뒤 ready, 전환 직후 확정된 문장(#1)은 전환 전 모델(NMT)로 번역, 그 뒤 문장부터 Adaptive. 전환 뒤 중간 번역은 멈췄다. hi(예문 없음)는 칸 머리와 오류 줄에 실패가 나온다. 화면 기본값(ko → en·ja·zh-CN)도 확인: `ex-ko-en`·`ex-ko-ja`·`ex-ko-zh-cn`이 병렬로 각 약 3.1초에 만들어지고 번역됐다. 진행 중 Adaptive(강제) → TLLM 문맥형(`settings`에 `mt`·`glossaryMode`) 전환: 다음 문장부터 `llm+ctx`, 중간 번역이 다시 나왔다(언어당 5~7건).
+
+**중간 번역**: Adaptive + 용어집이면 서버가 중간 번역을 하지 않는다(호출이 약 2초라 의미가 없다). 체크박스 값은 그대로 두고, 다른 모델로 바꾸거나 용어집을 끄면 다시 동작한다. 확인됨: 이 조합에서 중간 번역 0건, 다른 조합에서는 언어당 10~12건(long, 3문장).
+
+**6가지 조합 결과** (확인됨(2026-11-15 실행), `scripts/check-ws.mjs`, en→ko, 합성 음성, 로컬. 위: chirp_3 / `gl2.wav`, 아래 표: long / `gl.wav`. 강조 = `terms`)
+
+| 조합 | "Yesterday I met Matt and Lauren Tan at SpaceX." | "Poteto is the creator of pstack." | "The context window of this model is large." | 확정 번역 지연 |
+|---|---|---|---|---|
+| NMT 강제 | 어제 저는 SpaceX 에서 Matt 과 Lauren Tan 만났습니다. [Matt, Lauren Tan] | Poteto 는 pstack 의 창시자입니다. [Poteto] | 이 모델의 컨텍스트 윈도우 넓습니다. [컨텍스트 윈도우] | 130~560ms |
+| TLLM 강제 | 어제 저는 SpaceX 에서 Matt 과 Lauren Tan 만났습니다. [SpaceX, Matt, Lauren Tan] | Poteto 는 pstack 의 제작자입니다. [] | 이 모델의 컨텍스트 윈도우 큽니다. [] | 400~500ms |
+| TLLM 문맥형 | 어제 저는 스페이스X에서 맷과 로렌 탄을 만났습니다. [] | Poteto는 pstack의 제작자입니다. [Poteto, pstack] | 이 모델의 컨텍스트 윈도우는 큽니다. [컨텍스트 윈도우] | 360~750ms |
+| Adaptive + 용어집 강제(데이터셋) | 어제 저는 SpaceX 에서 Matt 과 Lauren Tan 만났습니다. [SpaceX, Matt, Lauren Tan] | Poteto 는 pstack 의 제작자입니다. [] | 이 모델의 컨텍스트 윈도우 큽니다. [] | 1.9~2.0초 |
+| Adaptive + 용어집 문맥형(데이터셋) | 어제 저는 스페이스X에서 맷과 로렌 탄을 만났습니다. [] | Poteto는 pstack의 제작자입니다. [Poteto, pstack] | 이 모델의 컨텍스트 윈도우는 큽니다. [컨텍스트 윈도우] | 1.9~2.1초 |
+| Adaptive 용어집 끔(인라인) | 어제 저는 스페이스X에서 맷과 로렌 탄을 만났습니다. [] | Poteto는 pstack의 제작자입니다. [] | 이 모델의 컨텍스트 윈도우는 큽니다. [] | 360~510ms |
+
+long 모델(STT가 소문자 고유명사를 냄: "Matt pocock and Lauren tan work at SpaceX", "I met potato and matted SpaceX yesterday")
+
+| 조합 | "Matt pocock and Lauren tan work at SpaceX" | 지연 |
+|---|---|---|
+| NMT 강제 | Matt Pocock 과 Lauren Tan SpaceX 에서 근무합니다. [Matt Pocock, Matt, Lauren Tan] | 149ms |
+| TLLM 강제 | Matt Pocock 과 Lauren Tan SpaceX 에서 일합니다. [SpaceX, Matt Pocock, Matt, Lauren Tan] | 373ms |
+| TLLM 문맥형 | 맷 포콕과 로렌 탄은 스페이스X에서 일합니다. [] | 366ms |
+| Adaptive 강제(데이터셋) | Matt Pocock 과 Lauren Tan SpaceX 에서 일합니다. [SpaceX, Matt Pocock, Matt, Lauren Tan] | 2,038ms |
+| Adaptive 문맥형(데이터셋) | 맷 포콕과 로렌 탄은 스페이스X에서 일합니다. [] | 2,022ms |
+| Adaptive 끔(인라인) | 맷 포콕과 로렌 탄은 스페이스X에서 일합니다. [] | 386ms |
+
+- 강제 적용은 세 모델 모두 용어를 지켰고(소문자 `pocock`·`tan`도 용어집 표기로), 조사 앞 공백과 조사 누락(`Lauren Tan SpaceX 에서`의 "은", `만났습니다` 앞 "을", `윈도우 큽니다`의 "는")이 생긴다.
+- 문맥형은 TLLM·Adaptive 모두 용어를 지키지 않았다(`맷 포콕`, `스페이스X`). 결과가 용어집 끔과 같았다. `Poteto`가 그대로 나온 것은 원래 그렇게 번역되는 문장이라서다.
+- STT가 `potato`로 들은 경우(long)는 어느 조합도 `Poteto`가 되지 않는다(용어집에 potato 행이 없음, 4.2절).
+- **HTML 엔티티가 섞여 온다 (확인됨, 결정 필요)**: `mimeType: text/plain`인데도 TLLM 강제 적용과 Adaptive 데이터셋(강제·문맥형 모두)의 `glossaryTranslations`가 `&quot;`, `&amp;`, `&#39;`로 온다(예: ko→en `I&#39;m the creator; I&#39;ve increased the context window.`, `I created &quot;pstack&quot; &amp;<CLI>`). NMT 강제, TLLM 문맥형, TLLM·Adaptive 용어집 끔은 그대로 온다. 화면은 `textContent`로 넣으므로 `I&#39;m`이 그대로 보인다. 엔티티를 되돌리는 것도 번역 결과 후처리라 넣지 않았다.
+- Adaptive 강제의 `SpaceX`는 적용 전 번역이 `스페이스X`라 강조됐다(맞는 강조). TLLM 강제에서 `Poteto`가 강조되지 않은 것은 적용 전 번역에도 `Poteto`가 있어서다.
 
 ---
 
@@ -373,7 +488,7 @@ C를 고른다. 문서가 "replace all of its entries with a new glossary input 
 - [x] API 활성화: `speech.googleapis.com`, `translate.googleapis.com`, `storage.googleapis.com` (8절의 `run`, `cloudbuild`도 활성화됨)
 - [ ] 인증: 로컬 개발에서는 `gcloud auth application-default login`과 `gcloud auth application-default set-quota-project P`. 로컬 실행 계정(사람)과 Cloud Run 서비스 계정(8절)에는 다음 역할이 필요하다. 로컬 계정이 프로젝트 Owner면 따로 줄 것은 없다.
   - `roles/speech.client` (Cloud Speech Client, "Grants access to the recognition APIs". `speech.recognizers.recognize` 권한 포함). 출처: https://docs.cloud.google.com/iam/docs/roles-permissions/speech
-  - `roles/cloudtranslate.editor` (프로젝트 단위). 번역 호출과 glossary 사용(`cloudtranslate.glossaries.predict`)에 더해 화면 업로드의 교체에 필요한 `cloudtranslate.glossaries.update`, `get`, `create`, `delete`, LRO 조회(`cloudtranslate.operations.get`, `wait`)를 포함한다. 기존 `roles/cloudtranslate.user`에는 `get`·`list`·`predict`와 operations 조회만 있고 create/delete/update가 없어 editor로 바꾼다. 출처: https://docs.cloud.google.com/translate/docs/access-control
+  - `roles/cloudtranslate.editor` (프로젝트 단위). 번역 호출과 glossary 사용(`cloudtranslate.glossaries.predict`)에 더해 화면 업로드의 교체에 필요한 `cloudtranslate.glossaries.update`, `get`, `create`, `delete`, LRO 조회(`cloudtranslate.operations.get`, `wait`)를 포함한다. Adaptive + 용어집에서 서버가 예문 데이터셋을 만들므로(4.3절) `cloudtranslate.adaptiveMtDatasets.get`·`create`·`import`·`predict`도 필요하고, 모두 editor에 들어 있다(`user`에는 `get`·`list`·`predict`만 있어 데이터셋을 만들 수 없다). 기존 `roles/cloudtranslate.user`에는 `get`·`list`·`predict`와 operations 조회만 있고 create/delete/update가 없어 editor로 바꾼다. 출처: https://docs.cloud.google.com/translate/docs/access-control
   - 버킷 단위 `roles/storage.objectCreator`(새 객체 쓰기, `storage.objects.create`)와 `roles/storage.objectViewer`(읽기, `storage.objects.get`·`list`). 업로드마다 새 이름으로 쓰고 덮어쓰지 않으므로 이 두 개로 충분하다(`objectCreator`는 덮어쓰기와 삭제를 못 한다). 덮어쓰는 방식이었다면 `roles/storage.objectUser`가 필요하다. 출처: https://docs.cloud.google.com/storage/docs/access-control/iam-roles
   - glossary 생성·갱신 때 버킷의 CSV를 읽는 주체: 문서는 "For creating glossaries, you also need permissions to read objects in the [bucket]"이라고만 하고 호출자인지 Translation 서비스 에이전트인지 밝히지 않는다(**미확인**). 호출자(위 계정들)에게 `objectViewer`를 주므로 호출자 기준이면 충분하다. 그래도 권한 오류로 실패하면 Translation 서비스 에이전트에 같은 버킷의 `objectViewer`를 준다(서비스 에이전트 주소도 **미확인**, 오류 메시지에 나오는 주체를 쓴다). 출처: https://docs.cloud.google.com/translate/docs/advanced/glossary , https://docs.cloud.google.com/translate/docs/access-control
 - [x] GCS 버킷 `gs://gtr-923548-glossary` 생성(`us-central1`)
@@ -434,7 +549,7 @@ C를 고른다. 문서가 "replace all of its entries with a new glossary input 
    gcloud storage buckets add-iam-policy-binding gs://BUCKET --member=serviceAccount:$SA --role=roles/storage.objectCreator
    gcloud storage buckets add-iam-policy-binding gs://BUCKET --member=serviceAccount:$SA --role=roles/storage.objectViewer
    ```
-   - `roles/speech.client`: 음성 인식(`speech.recognizers.recognize`). `roles/cloudtranslate.editor`: 번역 호출, glossary 사용(`predict`), 화면 업로드의 glossary 교체(`update`, LRO 조회). `user` 역할에는 `update`가 없어 editor를 준다. 버킷 두 역할: 업로드한 CSV 쓰기와 `start` 때 읽기(버킷 단위로만 준다). 출처: 6절의 IAM 문서, 버킷 명령은 https://docs.cloud.google.com/storage/docs/access-control/using-iam-permissions
+   - `roles/speech.client`: 음성 인식(`speech.recognizers.recognize`). `roles/cloudtranslate.editor`: 번역 호출, glossary 사용(`predict`), 화면 업로드의 glossary 교체(`update`, LRO 조회), Adaptive 예문 데이터셋 생성(`adaptiveMtDatasets.create`·`import`, 4.3절). `user` 역할에는 `update`와 데이터셋 `create`·`import`가 없어 editor를 준다. 버킷 두 역할: 업로드한 CSV 쓰기와 `start` 때 읽기(버킷 단위로만 준다). 출처: 6절의 IAM 문서, 버킷 명령은 https://docs.cloud.google.com/storage/docs/access-control/using-iam-permissions
    - 배포하는 사람 계정에는 `roles/run.sourceDeveloper`, `roles/serviceusage.serviceUsageConsumer`, 서비스 계정에 대한 `roles/iam.serviceAccountUser`가 필요하다. 빌드는 기본적으로 Compute Engine 기본 서비스 계정으로 돌고, 그 계정에 `roles/run.builder`가 필요하다. 출처: https://docs.cloud.google.com/run/docs/deploying-source-code , https://docs.cloud.google.com/run/docs/configuring/services/service-identity
 4. 배포(프로젝트 루트에서):
    ```
@@ -497,6 +612,18 @@ C를 고른다. 문서가 "replace all of its entries with a new glossary input 
 | 중간 번역의 순서 꼬임·호출 수·체감 지연(새 항목) | `scripts/check-ws.mjs`(MODEL=long) | **확인됨(합성 음성)**: 순서 위반 0, 첫 표시 약 0.75~1.8초, 갱신 약 0.7~1.0초 간격, 문자 수 1.5~15배(4.2절, 10절). 사람 목소리 체감은 미확인 |
 | Cloud Run에서 WebSocket이 `--timeout` 시간에 끊기고 자동 재연결이 되는지, 재연결 공백이 몇 초인지 | 7절 11단계(`--timeout=120` 임시 배포) | 로컬 서버 재시작으로는 재연결 확인됨. Cloud Run은 미확인 |
 | Cloud Run에서의 번역 지연이 로컬과 비슷한지(서버가 `us-central1`로 옮겨 감) | 화면의 ms 값을 로컬 기록과 비교 | 미확인 |
+| TLLM 모델 경로·contextual 필드·응답 형태(새 항목) | `scripts/check-mt.mjs compare` | **확인됨**: `us-central1` 됨, `contextualTranslationEnabled` 받아들여짐, contextual이면 `translations`는 빈 문자열(4.3절) |
+| TLLM/contextual에서 한국어 조사 문제가 사라지는지(새 항목) | NMT와 같은 문장 비교 | **확인됨**: contextual에서는 공백·조사 누락이 없었다. contextual 없는 TLLM glossary는 NMT와 같은 문제. 단 contextual은 용어를 강제하지 않았다(`Matt Pocock`→`맷 포콕`, 4.3절 Adaptive dataset 항목) |
+| Adaptive 인라인 예문만으로 호출, ko→ja, glossary 동시 사용(새 항목) | `check-mt.mjs adaptive` | **확인됨**: 인라인만으로 됨, ko→ja 됨, glossary를 함께 주면 `INTERNAL: Persistent dataset is null` |
+| Adaptive dataset 방식에서 glossary가 붙는지(새 항목) | `check-adaptive-dataset.mjs` translate·extra·combos·latency | **확인됨**: 붙는다. 단 용어를 강제하는 것은 contextual을 끈 경우뿐이고 조사 앞 공백·조사 누락이 생긴다. contextual은 용어를 적용하지 않았다(TLLM contextual도 같음). 지연 약 2초, 대상 언어마다 dataset 필요, 인라인 예문과 함께 못 씀(4.3절) |
+| NMT에 문맥형(`contextualTranslationEnabled`)을 주면(새 항목) | 직접 호출 1회 | **확인됨**: `3 INVALID_ARGUMENT: Contextual translation is only supported for LLM models.` 화면은 NMT에서 강제 적용 고정(4.2절) |
+| 용어집 적용 방식 6가지 조합의 결과·강조·지연(새 항목) | `check-ws.mjs` MT·GLOSSARY_MODE·GLOSSARY, 소문자 고유명사 문장 | **확인됨(합성 음성)**: 강제 적용만 용어를 지키고 조사 문제가 있다. 문맥형은 용어를 지키지 않았다. 강조는 엉뚱한 것 없음. Adaptive 데이터셋 약 2초(4.4절 표). STT가 소문자 `poteto`를 내지 않아(`potato`/`Poteto`) 소문자 판별은 `pocock`·`tan`으로 했다. 소문자 `poteto`는 API 직접 호출로만 확인(4.3절) |
+| TLLM 강제·Adaptive 데이터셋 결과의 HTML 엔티티(새 항목) | 직접 호출 | **확인됨**: `&quot;`·`&amp;`·`&#39;`가 섞여 온다. 처리 여부는 결정 필요(4.4절) |
+| Adaptive 데이터셋 자동 생성 시간, 재시작, 진행 중 전환(새 항목) | `check-ws.mjs` MT=adaptive, SWITCH_MT=adaptive SWITCH_GLOSSARY=1 | **확인됨**: 처음 3~11초(언어쌍마다, 병렬), 서버 재시작 뒤 약 0.3초, 진행 중 전환 시 새 쌍만 준비(2.5초), 준비 중 문장은 "준비 중" 표시(4.4절) |
+| 데이터셋 삭제 API(새 항목) | `check-adaptive-dataset.mjs delete` | **확인됨**: 파일이 든 데이터셋도 바로 지워진다(약 0.95초) |
+| 새 선택 UI 표시·활성 규칙, 360px 레이아웃(새 항목) | Chrome(로컬 8091) | **확인됨**: NMT에서 고정·비활성과 안내, 용어집 끄면 비활성, LLM·Adaptive로 돌아가면 이전 선택 복원, 콘솔 오류 없음, 360px에서 가로 스크롤 없음. 실제 마이크 발화로는 미확인(가짜 메시지로 진행 화면 확인) |
+| Adaptive 호출 빈도 제한(1 QPS vs 분당 900)(새 항목) | `check-mt.mjs burst 10`, 중간 번역 20초 | **확인됨**: 약 5.5건/초 병렬에서도 429 없음. 1 QPS는 적용되지 않았다 |
+| 번역 모델별 중간 번역 갱신 간격(새 항목) | `check-ws.mjs` MT=nmt/llm/adaptive | **확인됨(합성 음성)**: 세 모델 모두 중간 번역이 오고 갱신 간격 약 0.7~0.8초(4.3절 표) |
 | 탭을 닫은 뒤 인스턴스가 0으로 줄어드는지(유휴 시 과금 없음 확인). 문서상 유휴 인스턴스는 최대 15분까지 남을 수 있다 | Cloud Run 콘솔의 인스턴스 수 그래프를 20분 뒤 확인 | 미확인 |
 
 ---
@@ -510,6 +637,7 @@ C를 고른다. 문서가 "replace all of its entries with a new glossary input 
 | STT v2 (long 또는 chirp_3) | 분당 $0.016(0~50만 분 구간, 모델별 단가 차이는 미확인) | 약 $1 |
 | NMT (Advanced), 중간 번역 끔 | 백만 자당 $20, 월 50만 자 무료(**미확인, 기억 기반**. 2026-11-14에 가격 페이지를 다시 열어 봤으나 본문이 스크립트로 렌더링돼 읽지 못함) | 약 $3.2 (무료 구간이면 $0) |
 | NMT, 중간 번역 켬(추가분) | 같은 단가. 실측 문자 수 배수(아래) 적용 | 쉼 있는 발표 기준 약 $5~$8 추가(확정 번역의 1.5~2.4배), 쉼 없이 길게 말하면 훨씬 커진다 |
+| Translation LLM / Adaptive | 단가 **미확인**(가격 페이지를 읽지 못함). 문서상 입력과 출력 문자를 모두 센다(PLAN-3modes.md 기준, 미확인). Adaptive는 인라인 예문(최대 5쌍)이 매 호출 입력으로 들어갈 수 있다(추정). 데이터셋 방식(Adaptive + 용어집)의 과금 차이(데이터셋 보관·가져오기 요금 여부, 예문이 입력 문자로 세어지는지)는 가격 페이지를 읽지 못해 **미확인**(2026-11-15에 다시 시도했으나 본문이 렌더링되지 않음). 데이터셋 방식은 중간 번역을 하지 않으므로 호출 수는 확정 번역만큼이다 | 같은 발표라도 NMT보다 훨씬 커질 수 있다. 중간 번역과 함께 쓰면 호출 수(1.5~15배, 아래)가 그대로 곱해진다 |
 | glossary | 번역 문자 수 기준 과금 | 위 금액에 포함 |
 | GCS | 무시할 수준 | ~$0 |
 | Cloud Run | WebSocket이 열린 동안 인스턴스는 활성으로 보고 CPU가 할당되며 instance-based billing으로 과금된다. 무료 구간(request-based 기준): 월 vCPU 180,000초, 메모리 360,000GB초, 요청 200만 건. 초과분 단가는 **미확인**(검색 요약 기준 vCPU초당 약 $0.000018~$0.000024) | 1 vCPU로 1시간이면 3,600 vCPU초라 무료 구간 안이면 $0, 넘어도 약 $0.1 미만 |
@@ -534,5 +662,7 @@ C를 고른다. 문서가 "replace all of its entries with a new glossary input 
 
 ## 11. 이후 확장
 
-- Translation LLM과 Adaptive Translation의 API 파라미터, contextual glossary, Adaptive용 예문(`examples.csv`), 관련 미확인 사항과 비용은 `PLAN-3modes.md`에 정리돼 있다.
-- Translation LLM은 같은 `translateText`에서 `model` 경로만 `.../models/general/translation-llm`으로 바꾸면 붙일 수 있는 구조로 둔다. 지금은 이를 위한 추상화나 설정을 넣지 않는다.
+- Translation LLM과 Adaptive Translation은 2026-11-15에 화면의 번역 모델 선택으로 넣었다(4.3절). `PLAN-3modes.md`의 미확인 사항 중 위 4.3절에서 확인한 것은 그 문서보다 이 문서가 우선이다.
+- Adaptive + 용어집은 2026-11-15에 데이터셋 방식으로 넣었다(4.4절). 남은 것: 예문 화면 업로드, `examples.csv` 변경 시 데이터셋 갱신, 강제 적용의 조사 공백 보정(결정 필요).
+- 예문 화면 업로드: 지금은 저장소 루트 `examples.csv`만 읽는다(서버 재시작 필요). 필요하면 용어집 업로드와 같은 방식으로 버킷에 두고 읽는다.
+- TLLM·Adaptive 단가 확인과 비용 상한(예: 중간 번역은 NMT로만 하는 옵션).

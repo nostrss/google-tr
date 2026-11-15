@@ -1,4 +1,5 @@
 // 실시간 다국어 자막 서버: 정적 파일 + WebSocket(STT → NMT) + 용어집 교체(HTTP)
+const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
 const express = require('express');
@@ -17,6 +18,12 @@ const STT_MODELS = ['long', 'chirp_3'];
 // long은 이 원문 언어에서 구문 힌트(adaptation)를 거부한다(2026-11-15 실행 확인. public/index.html에도 같은 목록이 있다)
 const NO_HINTS = { long: ['zh-CN', 'hi', 'ru', 'ko'] };
 const INTERIM_GAP_MS = 700; // 언어별 중간 번역 호출 사이 최소 간격
+// 화면에서 고르는 번역 모델(허용 목록). nmt = Google NMT, llm = Translation LLM,
+// adaptive = Adaptive Translation(용어집 끔: 인라인 예문, 용어집 켬: 예문 데이터셋 + glossary)
+const MT_MODELS = ['nmt', 'llm', 'adaptive'];
+// 용어집 적용 방식(허용 목록). forced = 용어 강제(조사 앞 공백·누락 가능), contextual = 문맥형(LLM·Adaptive만, 용어가 안 지켜질 수 있음).
+// NMT에 contextual을 주면 'Contextual translation is only supported for LLM models.'(400)라서 NMT는 항상 forced
+const GLOSSARY_MODES = ['forced', 'contextual'];
 const ROTATE_MS = Number(process.env.STT_ROTATE_MS) || 270_000; // 4분 30초마다 STT 스트림 교체(5분 상한 대비). 점검 때만 짧게 덮어쓴다
 const PHRASE_BOOST = 10;
 // 번역/용어집 언어 코드 → STT 언어 코드
@@ -50,6 +57,17 @@ function parseGlossaryCsv(buf) {
   // 공백을 정리한 내용으로 다시 써서 올린다(서버가 읽는 용어와 glossary가 쓰는 용어를 일치시키기 위해)
   const csv = [header.join(','), ...terms.map((t) => header.map((h) => t[h]).join(','))].join('\n') + '\n';
   return { terms, csv };
+}
+
+// ---------- Adaptive 예문: 저장소 루트 examples.csv(glossary와 같은 10개 언어 헤더, 최대 5행)를 서버 시작 때 읽는다 ----------
+// 같은 검사 규칙을 쓰므로 칸 안에 ASCII 쉼표·따옴표를 쓸 수 없다
+let examples = [], examplesError = null;
+try {
+  examples = parseGlossaryCsv(fs.readFileSync(path.join(__dirname, 'examples.csv'))).terms;
+  if (examples.length > 5) throw new Error(`예문은 최대 5행입니다(${examples.length}행)`); // 인라인 예문 상한 5쌍
+} catch (e) {
+  examples = [];
+  examplesError = e.code === 'ENOENT' ? 'examples.csv가 없습니다' : `examples.csv: ${e.message}`;
 }
 
 // ---------- Google 클라이언트 ----------
@@ -132,6 +150,72 @@ app.use((err, req, res, next) => {
   res.status(err.status || 500).json({ error: err.status === 413 ? '파일이 1MB를 넘습니다' : err.message });
 });
 
+// ---------- Adaptive 예문 데이터셋: 언어쌍마다 1개(ex-<원문>-<대상>), examples.csv의 두 열로 만든다 ----------
+// 인라인 예문에는 glossary를 붙일 수 없어('Persistent dataset is null') 용어집을 켠 Adaptive는 데이터셋을 쓴다.
+// ponytail: 한번 만든 데이터셋은 examples.csv가 바뀌어도 갱신하지 않는다. 바꾸려면 데이터셋을 지우고(deleteAdaptiveMtDataset) 서버를 다시 띄우면
+// 다음 시작 때 새로 만든다(준비 상태를 메모리에 두므로 서버를 그대로 두면 지운 데이터셋을 계속 준비됨으로 본다)
+const PARENT = `projects/${PROJECT}/locations/${LOCATION}`;
+const dsName = (source, lang) => `${PARENT}/adaptiveMtDatasets/` + `ex-${source}-${lang}`.toLowerCase(); // zh-CN → ex-zh-cn-ko
+const datasets = new Map(); // 'ko-en' -> { state: 'preparing' | 'ready' | 'failed', promise, ms, error } (모든 세션이 같이 쓴다)
+function ensureDataset(source, lang) {
+  const key = `${source}-${lang}`;
+  let d = datasets.get(key);
+  if (d && d.state !== 'failed') return d; // 실패했으면 다시 시도한다
+  d = { state: 'preparing' };
+  const t0 = Date.now();
+  d.promise = (async () => {
+    const pairs = examples.filter((e) => e[source] && e[lang]);
+    if (pairs.length < 5) throw new Error(examplesError || `examples.csv에 ${source}·${lang} 예문이 ${pairs.length}쌍입니다(데이터셋에는 5쌍 필요)`);
+    const name = dsName(source, lang);
+    let ds = null;
+    try { [ds] = await translate.getAdaptiveMtDataset({ name }); } catch (e) { if (e.code !== 5) throw e; }
+    if (!ds) [ds] = await translate.createAdaptiveMtDataset({ parent: PARENT,
+      adaptiveMtDataset: { name, displayName: name.split('/').pop().replaceAll('-', '_'), sourceLanguageCode: source, targetLanguageCode: lang } });
+    if (!ds.exampleCount) await translate.importAdaptiveMtFile({ parent: name, fileInputSource: { mimeType: 'text/tab-separated-values',
+      content: Buffer.from(pairs.map((e) => `${e[source]}\t${e[lang]}`).join('\n') + '\n'), displayName: 'examples.tsv' } });
+  })().then(() => { d.state = 'ready'; d.ms = Date.now() - t0; console.log('adaptive dataset ready', key, d.ms + 'ms'); },
+    (e) => { d.state = 'failed'; d.error = e.message; throw e; });
+  d.promise.catch(() => {}); // 실패는 구독한 세션이 알린다
+  datasets.set(key, d);
+  return d;
+}
+
+// glossary 강제 적용(TLLM, Adaptive)은 mimeType이 text/plain이어도 결과에 HTML 엔티티를 섞어 보낸다. 한 번만 되돌린다
+const ENT = { '&quot;': '"', '&amp;': '&', '&lt;': '<', '&gt;': '>', '&#39;': "'", '&#x27;': "'" };
+const unesc = (s) => s.replace(/&(?:quot|amp|lt|gt|#39|#x27);/g, (m) => ENT[m]);
+
+// 번역 모델별 호출. 돌려주는 값: out = 화면에 보일 번역, plain = glossary 적용 전 번역(강조 계산용, 문맥형이면 빈 문자열)
+async function machineTranslate(mt, text, source, lang, useGlossary, contextual) {
+  const parent = PARENT;
+  const glossaryConfig = { glossary: GLOSSARY, ignoreCase: true, ...(contextual && { contextualTranslationEnabled: true }) };
+  if (mt === 'adaptive' && useGlossary) {
+    const d = datasets.get(`${source}-${lang}`);
+    if (d?.state !== 'ready') throw Object.assign(new Error(d?.state === 'failed' ? `예문 데이터셋 준비 실패: ${d.error}` : '예문 데이터셋 준비 중…'), { pending: d?.state !== 'failed' });
+    // 강제 적용이면 translations도 오지만 이미 조사 앞 공백이 들어간 형태다. 문맥형이면 translations는 빈 배열
+    const [r] = await translate.adaptiveMtTranslate({ parent, dataset: dsName(source, lang), content: [text], mimeType: 'text/plain', glossaryConfig });
+    return { out: unesc(r.glossaryTranslations[0].translatedText), plain: unesc(r.translations[0]?.translatedText || '') };
+  }
+  if (mt === 'adaptive') {
+    // 용어집 끔: 인라인 예문(최대 5쌍). 데이터셋 방식보다 빠르다(약 0.5초 대 2초)
+    const pairs = examples.filter((e) => e[source] && e[lang]).map((e) => ({ sourceSentence: e[source], targetSentence: e[lang] }));
+    if (!pairs.length) throw new Error(examplesError || `examples.csv에 ${source}·${lang} 열 예문이 없습니다`);
+    const [r] = await translate.adaptiveMtTranslate({
+      parent, content: [text], mimeType: 'text/plain',
+      referenceSentenceConfig: { referenceSentencePairLists: [{ referenceSentencePairs: pairs }], sourceLanguageCode: source, targetLanguageCode: lang },
+    });
+    const out = unesc(r.translations[0].translatedText);
+    return { out, plain: out };
+  }
+  const [r] = await translate.translateText({
+    parent, contents: [text], sourceLanguageCode: source, targetLanguageCode: lang, mimeType: 'text/plain',
+    model: `${parent}/models/general/${mt === 'llm' ? 'translation-llm' : 'nmt'}`,
+    // TLLM 문맥형이면 translations는 빈 문자열로 온다
+    ...(useGlossary && { glossaryConfig }),
+  });
+  const plain = unesc(r.translations[0]?.translatedText || '');
+  return { out: useGlossary ? unesc(r.glossaryTranslations[0].translatedText) : plain, plain };
+}
+
 // ---------- WebSocket 세션: 오디오 → STT → 발화마다 번역(중간 + 확정) ----------
 function session(ws) {
   const send = (m) => ws.readyState === ws.OPEN && ws.send(JSON.stringify(m));
@@ -168,7 +252,7 @@ function session(ws) {
       if (interim && s === stream) { // 교체돼 입력을 닫은 스트림의 interim은 버린다
         utt ??= nextId++;
         send({ type: 'interim', id: utt, text: interim });
-        if (cfg?.interim) for (const lang of c.targets) queueInterim(lang, utt, interim, c, words);
+        if (interimOn()) for (const lang of c.targets) queueInterim(lang, utt, interim, c, words);
       }
     });
     s.on('error', (e) => {
@@ -192,8 +276,8 @@ function session(ws) {
     done.add(id);
     for (const q of Object.values(queues)) if (q.next?.id === id) q.next = null; // 대기 중인 이 발화의 중간 번역은 버린다
     send({ type: 'final', id, text });
-    const useGlossary = cfg ? cfg.glossary : c.glossary; // 진행 중 settings로 바뀐 값을 따른다
-    for (const lang of c.targets) translateOne({ id, text, source: c.source, lang, useGlossary, words, interim: false });
+    const now = cfg || c; // 진행 중 settings로 바뀐 값을 따른다
+    for (const lang of c.targets) translateOne({ id, text, source: c.source, lang, useGlossary: now.glossary, words, interim: false, mt: now.mt, contextual: contextualOf(now) });
   }
 
   // 언어별로 동시에 1개, 최소 간격 INTERIM_GAP_MS. 기다리는 동안 온 interim은 가장 최신 것만 남긴다
@@ -209,33 +293,42 @@ function session(ws) {
     if (wait > 0) { q.timer = setTimeout(() => { q.timer = null; pump(lang); }, wait); return; }
     const job = q.next;
     q.next = null;
-    if (done.has(job.id) || job.text === q.last || !cfg?.interim) return pump(lang);
+    if (done.has(job.id) || job.text === q.last || !interimOn()) return pump(lang);
     q.busy = true; q.at = Date.now(); q.last = job.text;
-    await translateOne({ ...job, lang, useGlossary: !!cfg?.glossary, interim: true });
+    await translateOne({ ...job, lang, useGlossary: cfg.glossary, interim: true, mt: cfg.mt, contextual: contextualOf(cfg) });
     q.busy = false;
     pump(lang);
   }
 
-  async function translateOne({ id, text, source, lang, useGlossary, words, interim }) {
+  async function translateOne({ id, text, source, lang, useGlossary, words, interim, mt, contextual }) {
     const t0 = Date.now();
     stats[interim ? 'interimCalls' : 'finalCalls']++;
     stats[interim ? 'interimChars' : 'finalChars'] += text.length;
     try {
-      const [r] = await translate.translateText({
-        parent: `projects/${PROJECT}/locations/${LOCATION}`,
-        contents: [text], sourceLanguageCode: source, targetLanguageCode: lang, mimeType: 'text/plain',
-        model: `projects/${PROJECT}/locations/${LOCATION}/models/general/nmt`,
-        ...(useGlossary && { glossaryConfig: { glossary: GLOSSARY, ignoreCase: true } }),
-      });
+      const { out, plain } = await machineTranslate(mt, text, source, lang, useGlossary, contextual);
       if (interim && done.has(id)) return; // 늦게 온 중간 번역이 확정 번역을 덮지 않게 버린다
-      const plain = r.translations[0].translatedText;
-      const out = useGlossary ? r.glossaryTranslations[0].translatedText : plain;
-      // glossary 적용 번역에는 있고 적용 전 번역에는 없는 대상 언어 용어 = glossary로 바뀐 용어
+      // glossary 적용 번역에는 있고 적용 전 번역에는 없는 대상 언어 용어 = glossary로 바뀐 용어.
+      // 문맥형은 적용 전 번역이 빈 문자열이라, 그때는 결과에 든 대상 언어 용어를 모두 강조한다.
+      // Adaptive 강제 적용의 적용 전 번역은 공백이 들어간 형태지만 용어 포함 여부만 보므로 그대로 비교한다
       const has = (s, w) => s.toLowerCase().includes(w.toLowerCase());
       const changed = useGlossary ? [...new Set(words.map((t) => t[lang]).filter((w) => w && has(out, w) && !has(plain, w)))] : [];
-      send({ type: 'translation', id, lang, text: out, ms: Date.now() - t0, terms: changed, ...(interim && { interim: true }) });
+      send({ type: 'translation', id, lang, mt, text: out, ms: Date.now() - t0, terms: changed, ...(contextual && { contextual: true }), ...(interim && { interim: true }) });
     } catch (e) {
-      if (!interim) send({ type: 'error', id, lang, message: e.message }); // 중간 번역 실패는 다음 interim이나 final이 대신한다
+      // 중간 번역 실패는 다음 interim이나 final이 대신한다. pending = 데이터셋 준비 중(오류가 아님)
+      if (!interim) send({ type: 'error', id, lang, message: e.message, ...(e.pending && { pending: true }) });
+    }
+  }
+
+  // Adaptive + 용어집(데이터셋)은 호출이 약 2초라 중간 번역을 쓰지 않는다(체크박스 값은 그대로 둔다)
+  const interimOn = () => cfg?.interim && !(cfg.mt === 'adaptive' && cfg.glossary);
+  const contextualOf = (c) => c.glossary && c.glossaryMode === 'contextual' && c.mt !== 'nmt';
+  // Adaptive + 용어집이면 대상 언어마다 데이터셋을 준비하고 상태를 알린다. 준비 중인 칸의 확정 번역은 '준비 중'으로 나오고 준비 후 다음 문장부터 번역된다
+  function prepareDatasets(c) {
+    if (c.mt !== 'adaptive' || !c.glossary) return;
+    for (const lang of c.targets) {
+      const d = ensureDataset(c.source, lang);
+      if (d.state === 'preparing') send({ type: 'dataset', lang, state: 'preparing' });
+      d.promise.then(() => send({ type: 'dataset', lang, state: 'ready', ms: d.ms }), (e) => send({ type: 'dataset', lang, state: 'failed', error: e.message }));
     }
   }
 
@@ -262,15 +355,20 @@ function session(ws) {
       if (gl.updating) return send({ type: 'error', message: '용어집 교체 중에는 시작할 수 없습니다' });
       const model = STT_MODELS.includes(m.model) ? m.model : STT_MODELS[0];
       const hints = !NO_HINTS[model]?.includes(m.source);
-      const c = { source: m.source, targets, glossary: !!m.glossary, interim: m.interim !== false, model, hints };
+      const mt = MT_MODELS.includes(m.mt) ? m.mt : MT_MODELS[0];
+      const glossaryMode = GLOSSARY_MODES.includes(m.glossaryMode) ? m.glossaryMode : GLOSSARY_MODES[0];
+      const c = { source: m.source, targets, glossary: !!m.glossary, interim: m.interim !== false, model, hints, mt, glossaryMode };
       try { terms = (await loadGlossary())?.terms || []; }
       catch (e) { terms = []; send({ type: 'error', message: `용어집을 읽지 못해 구문 힌트·용어 강조 없이 시작합니다: ${e.message}` }); }
       cfg = c;
       stream = openStream();
-      send({ type: 'started', model, phrases: hints ? terms.filter((t) => t[c.source]).length : 0 });
+      send({ type: 'started', model, mt, phrases: hints ? terms.filter((t) => t[c.source]).length : 0 });
+      prepareDatasets(c);
     } else if (m.type === 'settings' && cfg) {
       // 다음 발화(번역 호출)부터 적용
-      cfg = { ...cfg, ...('glossary' in m && { glossary: !!m.glossary }), ...('interim' in m && { interim: !!m.interim }) };
+      cfg = { ...cfg, ...('glossary' in m && { glossary: !!m.glossary }), ...('interim' in m && { interim: !!m.interim }),
+        ...(MT_MODELS.includes(m.mt) && { mt: m.mt }), ...(GLOSSARY_MODES.includes(m.glossaryMode) && { glossaryMode: m.glossaryMode }) };
+      prepareDatasets(cfg);
     } else if (m.type === 'stop') {
       close();
     }
