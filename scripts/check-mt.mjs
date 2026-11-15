@@ -1,9 +1,11 @@
 // 관문 C 점검: node scripts/check-mt.mjs compare | pairs | latency | adaptive | burst [rounds]
 // Translation LLM(translateText + model translation-llm)과 Adaptive Translation(adaptiveMtTranslate, 인라인 예문)
+import config from '../config.js'; // .env를 Google 클라이언트보다 먼저 읽는다
 import { TranslationServiceClient } from '@google-cloud/translate';
 
-const P = 'gtr-923548', LOC = 'us-central1', parent = `projects/${P}/locations/${LOC}`;
-const GLOSSARY = `${parent}/glossaries/conf-terms`;
+config.requireProject();
+const P = config.PROJECT, LOC = 'us-central1', parent = `projects/${P}/locations/${LOC}`;
+const GLOSSARY = `${parent}/glossaries/${config.GLOSSARY_ID}`;
 const client = new TranslationServiceClient();
 const [cmd, arg] = process.argv.slice(2);
 const median = (a) => [...a].sort((x, y) => x - y)[a.length >> 1];

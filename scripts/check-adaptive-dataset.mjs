@@ -2,13 +2,15 @@
 //   node scripts/check-adaptive-dataset.mjs create <src> <tgt> inline|gcs | import <src> <tgt> inline|gcs | list | files <src> <tgt>
 //   | translate | extra | tllm | combos | pair | latency | burst [rounds] | rest
 // 만드는 리소스: dataset check-<src>-<tgt>(이름 규칙에 걸리면 check_<src>_<tgt>), 버킷 객체 adaptive-check-<src>-<tgt>*.tsv
+import config from '../config.js'; // .env를 Google 클라이언트보다 먼저 읽는다
 import { TranslationServiceClient } from '@google-cloud/translate';
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 
-const P = 'gtr-923548', LOC = 'us-central1', parent = `projects/${P}/locations/${LOC}`;
-const GLOSSARY = `${parent}/glossaries/conf-terms`;
-const BUCKET = 'gs://gtr-923548-glossary';
+config.requireProject();
+const P = config.PROJECT, LOC = 'us-central1', parent = `projects/${P}/locations/${LOC}`;
+const GLOSSARY = `${parent}/glossaries/${config.GLOSSARY_ID}`;
+const BUCKET = `gs://${config.BUCKET}`;
 const client = new TranslationServiceClient();
 const [cmd, a1, a2, a3] = process.argv.slice(2);
 const median = (a) => [...a].sort((x, y) => x - y)[a.length >> 1];
@@ -107,7 +109,7 @@ if (cmd === 'create') {
   await run('dataset+ref', () => translate(x, { ref: true }));
   await run('dataset+ref+glossary', () => translate(x, { ref: true, glossary: true }));
   await run('ref+glossary (no dataset, 재확인)', () => translate(x, { ds: null, ref: true, glossary: true }));
-  await run('dataset(번호 경로)+glossary', () => translate(x, { ds: dsName('en', 'ko').replace(P, '650337581319'), glossary: true }));
+  if (config.PROJECT_NUMBER) await run('dataset(번호 경로)+glossary', () => translate(x, { ds: dsName('en', 'ko').replace(P, config.PROJECT_NUMBER), glossary: true }));
 } else if (cmd === 'pair') {
   // 언어쌍 제약: en->ko dataset으로 다른 쌍 요청 (요청에는 언어 코드를 넣을 필드가 없다)
   await run('en-ko dataset, ko 원문', () => translate('Poteto는 pstack의 제작자입니다.', { s: 'ko', t: 'en' }));

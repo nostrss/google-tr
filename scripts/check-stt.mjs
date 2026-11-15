@@ -1,12 +1,14 @@
 // 관문 B 점검: node scripts/check-stt.mjs <wav> <lang> [hint|nohint] [reopenSec]
 //   wav가 '-'면 오디오 없이 설정 수락 여부만 본다(무음 1초).
 //   reopenSec를 주면 그 초마다 스트림을 닫고 새로 연다.
+import cfg from '../config.js'; // .env를 Google 클라이언트보다 먼저 읽는다
 import { readFileSync } from 'node:fs';
 import speech from '@google-cloud/speech';
 
 const [wav, lang = 'en-US', hint = 'nohint', reopenSec] = process.argv.slice(2);
 const client = new speech.v2.SpeechClient({ apiEndpoint: 'us-speech.googleapis.com' });
-const recognizer = 'projects/gtr-923548/locations/us/recognizers/_';
+cfg.requireProject();
+const recognizer = `projects/${cfg.PROJECT}/locations/us/recognizers/_`;
 const PHRASES = ['Poteto', 'pstack', 'context window', '컨텍스트 윈도우', 'PR', 'CLI'];
 
 // WAV의 data 청크만 꺼낸다(16kHz mono Int16 전제)

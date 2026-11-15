@@ -108,7 +108,7 @@ CSV 파서, 마이크 처리 라이브러리는 쓰지 않는다. 브라우저 �
 
 | 리소스 | 값 | 비고 |
 |---|---|---|
-| 프로젝트 | `gtr-923548` | 코드에 상수(`PROJECT`)로 들어 있다 |
+| 프로젝트 | `gtr-923548` | 환경 변수 `GOOGLE_CLOUD_PROJECT`(또는 `.env`)로 정한다. 버킷·glossary 이름도 `GLOSSARY_BUCKET`·`GLOSSARY_ID`로 바꿀 수 있다([`SETUP.md`](SETUP.md)) |
 | 버킷 | `gs://gtr-923548-glossary` | 업로드마다 `glossary-<UTC시각>.csv`가 새로 쌓인다(지우지 않음) |
 | glossary | `projects/gtr-923548/locations/us-central1/glossaries/conf-terms` | 10개 언어 equivalent term set 1개만 관리. 최초 생성은 수동(`PLAN.md` 5.1절) |
 | Adaptive dataset | `projects/gtr-923548/locations/us-central1/adaptiveMtDatasets/ex-<원문>-<대상>` | 언어쌍마다 1개, 서버가 자동으로 만든다(예: `ex-ko-en`, `ex-zh-cn-ko`) |
@@ -641,7 +641,7 @@ stateDiagram-v2
 | Node.js | `npm install`로 의존성 설치. `package.json`에 `engines`가 없어 필요한 Node 버전은 명시돼 있지 않다(미확인) |
 | GCP 인증(로컬) | `gcloud auth application-default login`, `gcloud auth application-default set-quota-project gtr-923548` |
 | 권한 | 프로젝트 Owner면 따로 필요 없다. 아니면 `roles/speech.client`, `roles/cloudtranslate.editor`(glossary 교체와 Adaptive 데이터셋 생성 때문에 `user`로는 부족), 버킷 단위 `roles/storage.objectCreator`·`roles/storage.objectViewer` |
-| GCP 리소스 | API(speech, translate, storage) 활성화, 버킷 `gtr-923548-glossary`, glossary `conf-terms` 최초 생성(`PLAN.md` 5.1절). 셋 다 프로젝트에 이미 만들어져 있다 |
+| GCP 리소스 | API(speech, translate, storage) 활성화, 버킷 `gtr-923548-glossary`, glossary `conf-terms` 최초 생성(`PLAN.md` 5.1절). 셋 다 프로젝트에 이미 만들어져 있다. 새 프로젝트로 준비하는 절차와 `.env` 설정은 [`SETUP.md`](SETUP.md) |
 | 브라우저 | Chrome 기준. `AudioContext({ sampleRate: 16000 })`로 마이크와 다른 샘플레이트를 연결하는 방식이 Chrome 기준이다(다른 브라우저는 미확인). `http://localhost`는 HTTPS 없이도 마이크를 쓸 수 있다 |
 
 ### 실행
@@ -714,7 +714,7 @@ It started out as a single CLI tool.,一开始只是一个CLI工具。,Empezó c
 | 명령 | 하는 일 | 주의 |
 |---|---|---|
 | `node scripts/check-csv.mjs [CSV경로]` | 용어집 검사 규칙을 assert로 점검, 경로를 주면 그 파일도 검사 | GCP 호출 없음 |
-| `node scripts/check-translate.mjs get` · `translate` · `create` · `patch <gs-uri> [mask]` · `patch-race <gs-uri>` | glossary 조회, NMT 번역, glossary 생성·교체 | `create`·`patch`는 실제 glossary를 바꾼다 |
+| `node scripts/check-translate.mjs get` · `translate` · `create` · `patch <gs-uri> [mask]` · `patch-race <gs-uri>` | glossary 조회, NMT 번역, glossary 생성·교체 | `create`(루트 `glossary.csv`를 버킷에 올리고 최초 생성)·`patch`는 실제 glossary를 바꾼다 |
 | `node scripts/check-stt.mjs <wav 또는 -> <STT언어코드> [hint\|nohint] [reopenSec]` | STT 스트리밍 단독 점검(`-`면 무음으로 설정 수락만) | 모델은 `MODEL` 환경 변수, 기본 `chirp_3` |
 | `node scripts/check-ws.mjs <wav> <원문> <대상1,대상2,대상3> [url]` | 실행 중인 서버에 WAV를 실시간으로 흘려 interim·번역·요약 출력. `MT`, `GLOSSARY`, `GLOSSARY_MODE`, `MODEL`, `INTERIM`, `OFF_AFTER`, `SWITCH_MT` 등 환경 변수 | 기본 url이 `ws://localhost:8080`(실행 중인 서버에 붙는다). 다른 포트면 url을 준다 |
 | `node scripts/check-mt.mjs compare` · `pairs` · `latency` · `adaptive` · `burst [rounds]` | NMT·LLM·Adaptive(인라인) 결과와 지연 비교 | 번역 요금 발생 |

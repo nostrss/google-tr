@@ -1,4 +1,5 @@
 // 실시간 다국어 자막 서버: 정적 파일 + WebSocket(STT → NMT) + 용어집 교체(HTTP)
+const config = require('./config'); // .env를 Google 클라이언트보다 먼저 읽는다
 const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
@@ -8,10 +9,9 @@ const speech = require('@google-cloud/speech');
 const { TranslationServiceClient } = require('@google-cloud/translate');
 const { Storage } = require('@google-cloud/storage');
 
-const PROJECT = 'gtr-923548';
-const LOCATION = 'us-central1';
-const BUCKET = 'gtr-923548-glossary';
-const GLOSSARY = `projects/${PROJECT}/locations/${LOCATION}/glossaries/conf-terms`;
+const { PROJECT, BUCKET, GLOSSARY_ID } = config; // 환경 변수 또는 .env (config.js)
+const LOCATION = 'us-central1'; // glossary는 us-central1에만 둘 수 있다
+const GLOSSARY = `projects/${PROJECT}/locations/${LOCATION}/glossaries/${GLOSSARY_ID}`;
 const RECOGNIZER = `projects/${PROJECT}/locations/us/recognizers/_`;
 // 화면에서 고르는 인식 모델(허용 목록). long은 interim이 단어 단위로 자주 오고, chirp_3는 약 5초에 한 번이다
 const STT_MODELS = ['long', 'chirp_3'];
@@ -116,7 +116,7 @@ app.post('/glossary', express.raw({ type: 'text/csv', limit: '1mb' }), async (re
   try {
     let prevUri;
     try { [{ inputConfig: { gcsSource: { inputUri: prevUri } } }] = await translate.getGlossary({ name: GLOSSARY }); }
-    catch (e) { throw new Error(e.code === 5 ? '용어집(conf-terms)이 아직 없습니다. 최초 생성(5.1절)을 먼저 하세요' : e.message); }
+    catch (e) { throw new Error(e.code === 5 ? `용어집(${GLOSSARY_ID})이 아직 없습니다. 최초 생성(SETUP.md)을 먼저 하세요` : e.message); }
     const name = `glossary-${new Date().toISOString().replace(/[-:.]/g, '')}.csv`;
     await bucket.file(name).save(parsed.csv, { contentType: 'text/csv; charset=utf-8' });
     try {
@@ -380,6 +380,7 @@ function session(ws) {
 }
 
 if (require.main === module) {
+  config.requireProject();
   const server = http.createServer(app);
   new WebSocketServer({ server }).on('connection', session);
   const port = process.env.PORT || 8080;
