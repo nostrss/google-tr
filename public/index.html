@@ -120,6 +120,7 @@ li.new { animation: arrive .7s ease-out; }
   <section class="controls" aria-label="자막 설정">
     <div class="row">
       <label class="field" for="srcSel"><span class="label">원문 언어</span><select id="srcSel"></select></label>
+      <label class="field" for="micSel"><span class="label">마이크</span><select id="micSel"><option value="">기본 마이크</option></select></label>
       <label class="field" for="modelSel"><span class="label">인식 모델</span><select id="modelSel">
         <option value="long">long (중간 결과 자주)</option><option value="chirp_3">chirp_3 (중간 결과 드묾)</option></select></label>
       <label class="field" for="mtSel"><span class="label">번역 모델</span><select id="mtSel">
@@ -199,7 +200,7 @@ function syncControls() {
     box.checked = c !== st.src && st.targets.has(c);
   }
   const enough = targetList().length >= 3, updating = st.gl.state === "updating";
-  $("srcSel").disabled = $("modelSel").disabled = st.running;
+  $("srcSel").disabled = $("modelSel").disabled = $("micSel").disabled = st.running;
   $("modelNote").hidden = !(st.model === "long" && LONG_NO_HINTS.includes(st.src));
   // 문맥형은 LLM·Adaptive만 된다(NMT는 400 오류). NMT에서는 강제 적용으로 고정해 보여 주고 사용자의 선택(st.glMode)은 남겨 둔다
   const nmt = st.mt === "nmt";
@@ -384,8 +385,21 @@ class Pcm16 extends AudioWorkletProcessor {
 }
 registerProcessor("pcm16", Pcm16);`;
 let audio = null;
+// 마이크 목록. 마이크 권한을 허용하기 전에는 브라우저가 장치 ID와 이름을 주지 않아 "기본 마이크"만 보인다(한 번 시작하면 채워진다)
+async function loadMics() {
+  const sel = $("micSel"), cur = sel.value;
+  const mics = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === "audioinput" && d.deviceId && d.deviceId !== "default");
+  sel.replaceChildren(new Option("기본 마이크", ""), ...mics.map((d, i) => new Option(d.label || `마이크 ${i + 1}`, d.deviceId)));
+  sel.value = mics.some((d) => d.deviceId === cur) ? cur : ""; // 고른 장치가 뽑히면 기본 마이크로 돌아간다
+}
+if (navigator.mediaDevices) { // http(localhost 제외)에서는 mediaDevices가 없다
+  navigator.mediaDevices.addEventListener("devicechange", loadMics);
+  loadMics();
+}
 async function startMic() {
-  const media = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } });
+  const deviceId = $("micSel").value;
+  const media = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, ...(deviceId && { deviceId: { exact: deviceId } }) } });
+  loadMics(); // 권한을 받은 뒤라 장치 이름이 나온다
   // ponytail: 마이크와 다른 샘플레이트의 AudioContext 연결은 Chrome 기준. Firefox도 필요하면 worklet 안에서 직접 다운샘플한다
   const ctx = new AudioContext({ sampleRate: 16000 });
   await ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([WORKLET], { type: "text/javascript" })));
